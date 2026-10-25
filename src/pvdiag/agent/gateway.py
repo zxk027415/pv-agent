@@ -11,6 +11,13 @@ from time import perf_counter
 from fastmcp import Client
 
 from pvdiag.agent.state import DiagRequest, Scope, ToolCall, ToolTrace
+from pvdiag.knowledge.models import (
+    KNOWLEDGE_TOOLS,
+    PlaybookRequest,
+    PlaybookResult,
+    SearchRequest,
+    SearchResult,
+)
 from pvdiag.mcp_servers.models import (
     AnomaliesResult,
     CompareRequest,
@@ -41,25 +48,42 @@ CONTRACTS = {
     "profile_pattern": (PeerRequest, PatternsResult),
     "compare_periods": (CompareRequest, PeriodsResult),
     "expected_power": (ExpectedRequest, ExpectedResult),
+    "search_fault_kb": (SearchRequest, SearchResult),
+    "get_playbook": (PlaybookRequest, PlaybookResult),
 }
 BOOTSTRAP = {"list_devices", "get_site_info"}
 INVESTIGATE = set(CONTRACTS) - BOOTSTRAP
 
 
 class MCPGateway:
-    def __init__(self, clients, tools):
+    def __init__(self, clients, tools, knowledge_source_sha256=None):
         self.clients = clients
         self.tools = tools
+        self.knowledge_source_sha256 = knowledge_source_sha256
 
     @classmethod
     @asynccontextmanager
-    async def connect(cls, data_transport, analytics_transport):
+    async def connect(
+        cls,
+        data_transport,
+        analytics_transport,
+        knowledge_transport=None,
+        *,
+        knowledge_source_sha256=None,
+    ):
+        if (knowledge_transport is None) != (knowledge_source_sha256 is None):
+            raise ValueError("knowledge transport requires an explicitly pinned corpus fingerprint")
+        required = set(CONTRACTS) - KNOWLEDGE_TOOLS
+        transports = [data_transport, analytics_transport]
+        if knowledge_transport is not None:
+            required |= KNOWLEDGE_TOOLS
+            transports.append(knowledge_transport)
         async with AsyncExitStack() as stack:
             clients, catalog = {}, {}
-            for transport in (data_transport, analytics_transport):
+            for transport in transports:
                 client = await stack.enter_async_context(Client(transport, timeout=30))
                 for tool in await client.list_tools():
-                    if tool.name not in CONTRACTS:
+                    if tool.name not in required:
                         continue
                     if tool.name in clients:
                         raise ValueError("duplicate MCP tool names")
@@ -73,9 +97,9 @@ class MCPGateway:
                         "description": tool.description,
                         "input_schema": tool.input_schema,
                     }
-            if set(clients) != set(CONTRACTS):
+            if set(clients) != required:
                 raise ValueError("MCP servers do not expose the required tools")
-            yield cls(clients, catalog)
+            yield cls(clients, catalog, knowledge_source_sha256)
 
     async def call(self, call: ToolCall, request: DiagRequest, scope: Scope | None, node: str):
         start = perf_counter()
@@ -83,9 +107,11 @@ class MCPGateway:
             allowed = BOOTSTRAP if node == "guard_in" else INVESTIGATE
             if call.name not in allowed:
                 raise ValueError("tool is not allowed in this node")
+            if call.name not in self.clients:
+                raise ValueError("tool is not enabled")
             input_type, result_type = CONTRACTS[call.name]
             validated = input_type.model_validate(call.arguments)
-            if validated.system_id != request.system_id:
+            if call.name not in KNOWLEDGE_TOOLS and validated.system_id != request.system_id:
                 raise ValueError("system outside request scope")
             if hasattr(validated, "device_ids"):
                 allowed_devices = set(scope.device_ids) | {
@@ -125,7 +151,14 @@ class MCPGateway:
                 raise ValueError("invalid evidence identity")
             if evidence["request"] != validated.model_dump(mode="json"):
                 raise ValueError("evidence request mismatch")
-            if scope is not None and evidence["source_sha256"] != scope.source_sha256:
+            expected_source = (
+                self.knowledge_source_sha256
+                if call.name in KNOWLEDGE_TOOLS
+                else scope.source_sha256
+                if scope is not None
+                else None
+            )
+            if expected_source is not None and evidence["source_sha256"] != expected_source:
                 raise ValueError("MCP servers use different observation snapshots")
             return evidence, ToolTrace(
                 name=call.name,

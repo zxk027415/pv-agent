@@ -242,6 +242,7 @@ def build_graph(
             verification_mode=verification_mode,
             verification=state["verification"],
             verification_policy_sha256=policy_sha,
+            knowledge_source_sha256=gateway.knowledge_source_sha256,
         )
         return {"verdict": verdict, "result": result}
 

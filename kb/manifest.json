@@ -1,0 +1,196 @@
+{
+  "version": "kb-v1",
+  "documents": [
+    {
+      "document_id": "pvlib-soiling-hsu",
+      "title": "HSU soiling ratio and rain cleaning inputs",
+      "kind": "upstream_excerpt",
+      "fault_types": [
+        "F1"
+      ],
+      "path": "excerpts/pvlib-soiling-hsu.txt",
+      "content_sha256": "afcdd8f0300fa07ad6900de2923956d293efaa58af0f29d56d3bf53886c01a61",
+      "source_url": "https://github.com/pvlib/pvlib-python/blob/v0.16.1/pvlib/soiling.py#L13",
+      "source_version": "pvlib==0.16.1",
+      "source_sha256": "a748e698095e6822eee768b83184271ce41bfc2d83c2b714cc43e755434e5e89",
+      "license": "BSD-3-Clause",
+      "license_path": "licenses/pvlib-LICENSE.txt",
+      "license_sha256": "a02e12ddaada3cf0d5dbdd8affdd577c2eec640758a95842a304f7513b8c0be4",
+      "attribution": "pvlib python Contributors; PVLIB python Development Team; Sandia National Laboratories"
+    },
+    {
+      "document_id": "pvlib-shading-masking",
+      "title": "Row shading and average masking angle",
+      "kind": "upstream_excerpt",
+      "fault_types": [
+        "F2"
+      ],
+      "path": "excerpts/pvlib-shading-masking.txt",
+      "content_sha256": "8b5fa66759dadded456149441d32d32ca6699cf03e2a49f9847ad25d3e33ab74",
+      "source_url": "https://github.com/pvlib/pvlib-python/blob/v0.16.1/pvlib/shading.py#L102",
+      "source_version": "pvlib==0.16.1",
+      "source_sha256": "c62aa44dc2d6f228f3bb21c470723375a656b08b00653d5a5e6efdfcc3b9be8f",
+      "license": "BSD-3-Clause",
+      "license_path": "licenses/pvlib-LICENSE.txt",
+      "license_sha256": "a02e12ddaada3cf0d5dbdd8affdd577c2eec640758a95842a304f7513b8c0be4",
+      "attribution": "pvlib python Contributors; PVLIB python Development Team; Sandia National Laboratories"
+    },
+    {
+      "document_id": "pvlib-pvwatts-dc",
+      "title": "PVWatts DC power, effective irradiance and temperature inputs",
+      "kind": "upstream_excerpt",
+      "fault_types": [
+        "F1",
+        "F4",
+        "F5"
+      ],
+      "path": "excerpts/pvlib-pvwatts-dc.txt",
+      "content_sha256": "b9d07d4d14e0d72415f326df548f794d6be62324cf27ae934a9bf3f7e5bac2a4",
+      "source_url": "https://github.com/pvlib/pvlib-python/blob/v0.16.1/pvlib/pvsystem.py#L3052",
+      "source_version": "pvlib==0.16.1",
+      "source_sha256": "881de34dd0ec21ac9dc2c89f1b73568f6a566099df0b9a0f92d41874e4c313f0",
+      "license": "BSD-3-Clause",
+      "license_path": "licenses/pvlib-LICENSE.txt",
+      "license_sha256": "a02e12ddaada3cf0d5dbdd8affdd577c2eec640758a95842a304f7513b8c0be4",
+      "attribution": "pvlib python Contributors; PVLIB python Development Team; Sandia National Laboratories"
+    },
+    {
+      "document_id": "pvlib-pvwatts-ac",
+      "title": "PVWatts inverter efficiency and output clipping",
+      "kind": "upstream_excerpt",
+      "fault_types": [
+        "F3",
+        "F4",
+        "F5"
+      ],
+      "path": "excerpts/pvlib-pvwatts-ac.txt",
+      "content_sha256": "19727cca0fd6e273db56cb2e295605e5fb9f8caf3e86c8dc55ede5e816234bed",
+      "source_url": "https://github.com/pvlib/pvlib-python/blob/v0.16.1/pvlib/inverter.py#L336",
+      "source_version": "pvlib==0.16.1",
+      "source_sha256": "78b25bc11905ffae65876da2dee455db5cdef4527860c139c8bf47a831cc2dd0",
+      "license": "BSD-3-Clause",
+      "license_path": "licenses/pvlib-LICENSE.txt",
+      "license_sha256": "a02e12ddaada3cf0d5dbdd8affdd577c2eec640758a95842a304f7513b8c0be4",
+      "attribution": "pvlib python Contributors; PVLIB python Development Team; Sandia National Laboratories"
+    },
+    {
+      "document_id": "pvlib-faiman",
+      "title": "Faiman module temperature and empirical heat-loss assumptions",
+      "kind": "upstream_excerpt",
+      "fault_types": [
+        "F5"
+      ],
+      "path": "excerpts/pvlib-faiman.txt",
+      "content_sha256": "bf9a2bc21da24d44bc39a560597ae431a87b67f41b837f859352bb5fa632d0fa",
+      "source_url": "https://github.com/pvlib/pvlib-python/blob/v0.16.1/pvlib/temperature.py#L434",
+      "source_version": "pvlib==0.16.1",
+      "source_sha256": "2adbab834d25836007bad5fc429acd2b53b83dc99b7be6d288bc1644d5a18319",
+      "license": "BSD-3-Clause",
+      "license_path": "licenses/pvlib-LICENSE.txt",
+      "license_sha256": "a02e12ddaada3cf0d5dbdd8affdd577c2eec640758a95842a304f7513b8c0be4",
+      "attribution": "pvlib python Contributors; PVLIB python Development Team; Sandia National Laboratories"
+    },
+    {
+      "document_id": "playbook-f1",
+      "title": "积灰与清洗恢复 / Soiling",
+      "kind": "project_playbook",
+      "fault_types": [
+        "F1"
+      ],
+      "path": "playbooks/F1.md",
+      "content_sha256": "1fedc8f40d03da76322c8c8d15b5a2bd1419c0b5a3e4db191571d8a506461e64",
+      "source_url": "project:playbooks/F1.md",
+      "source_version": "playbook-v1",
+      "source_sha256": "1fedc8f40d03da76322c8c8d15b5a2bd1419c0b5a3e4db191571d8a506461e64",
+      "license": "project-authored",
+      "license_path": null,
+      "license_sha256": null,
+      "attribution": "PV Diagnosis Agent project-authored diagnostic procedure"
+    },
+    {
+      "document_id": "playbook-f2",
+      "title": "局部遮挡 / Shading",
+      "kind": "project_playbook",
+      "fault_types": [
+        "F2"
+      ],
+      "path": "playbooks/F2.md",
+      "content_sha256": "dfc8e99ab268be9f4373a521391e7dd1b6dd841d6da7014ede4caf90742a8952",
+      "source_url": "project:playbooks/F2.md",
+      "source_version": "playbook-v1",
+      "source_sha256": "dfc8e99ab268be9f4373a521391e7dd1b6dd841d6da7014ede4caf90742a8952",
+      "license": "project-authored",
+      "license_path": null,
+      "license_sha256": null,
+      "attribution": "PV Diagnosis Agent project-authored diagnostic procedure"
+    },
+    {
+      "document_id": "playbook-f3",
+      "title": "逆变器停机 / Inverter outage",
+      "kind": "project_playbook",
+      "fault_types": [
+        "F3"
+      ],
+      "path": "playbooks/F3.md",
+      "content_sha256": "a89ebe15de061bcd39088980bdf18b847047fd22a9e628a6cc1c9abb494e4e15",
+      "source_url": "project:playbooks/F3.md",
+      "source_version": "playbook-v1",
+      "source_sha256": "a89ebe15de061bcd39088980bdf18b847047fd22a9e628a6cc1c9abb494e4e15",
+      "license": "project-authored",
+      "license_path": null,
+      "license_sha256": null,
+      "attribution": "PV Diagnosis Agent project-authored diagnostic procedure"
+    },
+    {
+      "document_id": "playbook-f4",
+      "title": "组串失效 / String loss",
+      "kind": "project_playbook",
+      "fault_types": [
+        "F4"
+      ],
+      "path": "playbooks/F4.md",
+      "content_sha256": "fd3d6be86fd30d2349bd7eab5b301f0593f0f93e0c836f40dc34f2449831b80e",
+      "source_url": "project:playbooks/F4.md",
+      "source_version": "playbook-v1",
+      "source_sha256": "fd3d6be86fd30d2349bd7eab5b301f0593f0f93e0c836f40dc34f2449831b80e",
+      "license": "project-authored",
+      "license_path": null,
+      "license_sha256": null,
+      "attribution": "PV Diagnosis Agent project-authored diagnostic procedure"
+    },
+    {
+      "document_id": "playbook-f5",
+      "title": "辐照传感器漂移 / Irradiance sensor drift",
+      "kind": "project_playbook",
+      "fault_types": [
+        "F5"
+      ],
+      "path": "playbooks/F5.md",
+      "content_sha256": "4e9381d3b19cdbbe5e59856e901d53f9bc5f99e423a3049799ec5798da2816e4",
+      "source_url": "project:playbooks/F5.md",
+      "source_version": "playbook-v1",
+      "source_sha256": "4e9381d3b19cdbbe5e59856e901d53f9bc5f99e423a3049799ec5798da2816e4",
+      "license": "project-authored",
+      "license_path": null,
+      "license_sha256": null,
+      "attribution": "PV Diagnosis Agent project-authored diagnostic procedure"
+    },
+    {
+      "document_id": "playbook-f6",
+      "title": "通讯中断 / Communication gap",
+      "kind": "project_playbook",
+      "fault_types": [
+        "F6"
+      ],
+      "path": "playbooks/F6.md",
+      "content_sha256": "c4f8d80f45e7f0739e984303117c4f80a47b9318e7705279355844cee260079b",
+      "source_url": "project:playbooks/F6.md",
+      "source_version": "playbook-v1",
+      "source_sha256": "c4f8d80f45e7f0739e984303117c4f80a47b9318e7705279355844cee260079b",
+      "license": "project-authored",
+      "license_path": null,
+      "license_sha256": null,
+      "attribution": "PV Diagnosis Agent project-authored diagnostic procedure"
+    }
+  ]
+}

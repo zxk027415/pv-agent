@@ -16,6 +16,13 @@ from pvdiag.agent.rules import RuleReasoner
 from pvdiag.agent.state import DiagRequest
 from pvdiag.mcp_servers.pv_analytics import create_server as analytics_server
 from pvdiag.mcp_servers.pv_data import create_server as data_server
+from pvdiag.mcp_servers.pv_knowledge import (
+    add_knowledge_arguments,
+    knowledge_from_args,
+)
+from pvdiag.mcp_servers.pv_knowledge import (
+    create_server as knowledge_server,
+)
 from pvdiag.mcp_servers.store import ObservationStore
 
 
@@ -65,9 +72,21 @@ def add_model_arguments(parser):
 
 
 async def run_diagnosis(
-    store, request, reasoner, *, max_calls=30, max_loops=3, verification_mode="structural"
+    store,
+    request,
+    reasoner,
+    *,
+    max_calls=30,
+    max_loops=3,
+    verification_mode="structural",
+    knowledge_store=None,
 ):
-    async with MCPGateway.connect(data_server(store), analytics_server(store)) as gateway:
+    async with MCPGateway.connect(
+        data_server(store),
+        analytics_server(store),
+        knowledge_server(knowledge_store) if knowledge_store else None,
+        knowledge_source_sha256=knowledge_store.source_sha256 if knowledge_store else None,
+    ) as gateway:
         graph = build_graph(
             gateway,
             reasoner,
@@ -92,6 +111,7 @@ def main(argv=None):
     parser.add_argument("--end", required=True)
     parser.add_argument("--output", type=Path, default=Path("data/runs/diagnosis.json"))
     add_model_arguments(parser)
+    add_knowledge_arguments(parser)
     args = parser.parse_args(argv)
     request = DiagRequest(
         system_id=args.system_id, device_ids=args.devices, start=args.start, end=args.end
@@ -103,6 +123,7 @@ def main(argv=None):
             request,
             reasoner,
             verification_mode=args.verification,
+            knowledge_store=knowledge_from_args(args),
         )
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)

@@ -20,6 +20,8 @@ ToolName = Literal[
     "profile_pattern",
     "compare_periods",
     "expected_power",
+    "search_fault_kb",
+    "get_playbook",
 ]
 
 
@@ -156,6 +158,7 @@ class RunResult(Model):
     verification_mode: Literal["structural", "domain", "domain_llm"] = "structural"
     verification: list[VerificationRecord] = Field(default_factory=list)
     verification_policy_sha256: str | None = None
+    knowledge_source_sha256: str | None = None
 
 
 class DiagState(TypedDict, total=False):

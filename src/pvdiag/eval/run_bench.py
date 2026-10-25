@@ -10,11 +10,19 @@ from pathlib import Path
 from pvdiag.agent.__main__ import add_model_arguments, reasoner_from_args, run_diagnosis
 from pvdiag.agent.state import DiagRequest
 from pvdiag.eval.scorer import aggregate, score_case
+from pvdiag.mcp_servers.pv_knowledge import add_knowledge_arguments, knowledge_from_args
 from pvdiag.mcp_servers.store import ObservationStore
 
 
 async def run_benchmark(
-    manifest, scenario_root, metadata, output, reasoner_factory, *, verification_mode="structural"
+    manifest,
+    scenario_root,
+    metadata,
+    output,
+    reasoner_factory,
+    *,
+    verification_mode="structural",
+    knowledge_store=None,
 ):
     scenarios = manifest["scenarios"]
     if not scenarios or any(s["split"] != "dev" for s in scenarios):
@@ -45,7 +53,11 @@ async def run_benchmark(
             end=scenario["query_window"][1],
         )
         result = await run_diagnosis(
-            store, request, reasoner_factory(), verification_mode=verification_mode
+            store,
+            request,
+            reasoner_factory(),
+            verification_mode=verification_mode,
+            knowledge_store=knowledge_store,
         )
         (output / f"{scenario_id}.json").write_text(result.model_dump_json(indent=2) + "\n")
         cases.append(score_case(scenario, result))
@@ -63,6 +75,7 @@ async def run_benchmark(
         },
         "python": platform.python_version(),
         "verification_mode": verification_mode,
+        "knowledge_source_sha256": knowledge_store.source_sha256 if knowledge_store else None,
         "limitations": [
             "Screened baseline is not manually verified healthy.",
             "No held-out, normal-scene, or LLM-as-Judge evaluation in this smoke set.",
@@ -81,6 +94,7 @@ def main(argv=None):
     )
     parser.add_argument("--output", type=Path, default=Path("data/eval/m1_smoke"))
     add_model_arguments(parser)
+    add_knowledge_arguments(parser)
     args = parser.parse_args(argv)
     if args.mode == "llm" and not args.allow_model_calls:
         parser.error("LLM benchmark requires --allow-model-calls; no model request was sent")
@@ -92,6 +106,7 @@ def main(argv=None):
             args.output,
             lambda: reasoner_from_args(args),
             verification_mode=args.verification,
+            knowledge_store=knowledge_from_args(args),
         )
     )
     print(json.dumps(summary["metrics"], indent=2, allow_nan=False))

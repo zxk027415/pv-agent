@@ -1,0 +1,55 @@
+NLR's PVWatts inverter model.
+
+The PVWatts inverter model [1]_ calculates inverter efficiency :math:`\eta`
+as a function of input DC power :math:`P_{dc}`
+
+.. math::
+
+    \eta = \frac{\eta_{nom}}{\eta_{ref}} (-0.0162\zeta - \frac{0.0059}
+    {\zeta} + 0.9858)
+
+where :math:`\zeta=P_{dc}/P_{dc0}` and :math:`P_{dc0}=P_{ac0}/\eta_{nom}`.
+
+Output AC power is then given by
+
+.. math::
+
+    P_{ac} = \min(\eta P_{dc}, P_{ac0})
+
+Parameters
+----------
+pdc : numeric
+    DC power. Same unit as ``pdc0``.
+pdc0: numeric
+    DC input limit of the inverter.  Same unit as ``pdc``.
+eta_inv_nom: numeric, default 0.96
+    Nominal inverter efficiency. [unitless]
+eta_inv_ref: numeric, default 0.9637
+    Reference inverter efficiency. PVWatts defines it to be 0.9637
+    and is included here for flexibility. [unitless]
+
+Returns
+-------
+power_ac: numeric
+    AC power.  Same unit as ``pdc0``.
+
+Notes
+-----
+When sourcing ``pdc`` from pvlib functions
+(e.g. :py:func:`pvlib.pvsystem.pvwatts_dc`) their DC power output is in W,
+and ``pdc0`` should have the same unit (W).
+
+Note that ``pdc0`` is also used as a symbol in
+:py:func:`pvlib.pvsystem.pvwatts_dc`. ``pdc0`` in this function refers to
+the DC power input limit of the inverter. ``pdc0`` in
+:py:func:`pvlib.pvsystem.pvwatts_dc` refers to the DC power of the modules
+at reference conditions.
+
+See Also
+--------
+pvlib.inverter.pvwatts_multi
+
+References
+----------
+.. [1] A. P. Dobos, "PVWatts Version 5 Manual", NREL, Golden, CO, USA,
+   Technical Report NREL/TP-6A20-62641, 2014, :doi:`10.2172/1158421`.

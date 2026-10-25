@@ -7,6 +7,7 @@ import re
 
 from pvdiag.agent.state import DiagnosisReport, DiagRequest, Scope
 from pvdiag.data.normalize import utc_bound
+from pvdiag.knowledge.models import KNOWLEDGE_TOOLS
 
 
 def resolve(document: dict, path: str):
@@ -38,7 +39,7 @@ def check_report(
         issues.append("uncited_number_in_summary")
     if report.status == "normal":
         measurements = {evidence[key]["tool"] for key in referenced if key in evidence}
-        if len(measurements - {"list_devices", "get_site_info"}) < 2:
+        if len(measurements - {"list_devices", "get_site_info"} - KNOWLEDGE_TOOLS) < 2:
             issues.append("normal_verdict_requires_measurements")
     for finding in report.findings:
         citations = set(finding.evidence_ids)
@@ -47,7 +48,7 @@ def check_report(
         if not citations <= referenced:
             issues.append("finding_missing_from_report_citations")
         tools = {evidence[key]["tool"] for key in citations if key in evidence}
-        if len(tools - {"list_devices", "get_site_info"}) < 2:
+        if len(tools - {"list_devices", "get_site_info"} - KNOWLEDGE_TOOLS) < 2:
             issues.append("insufficient_distinct_tools")
         allowed = {scope.poa_device_id} if finding.fault_type == "F5" else set(scope.device_ids)
         if finding.device_id not in allowed:
@@ -61,6 +62,7 @@ def check_report(
                 actual = resolve(evidence[claim.evidence_id], claim.path)
                 if (
                     claim.evidence_id not in citations
+                    or evidence[claim.evidence_id]["tool"] in KNOWLEDGE_TOOLS
                     or isinstance(actual, bool)
                     or not isinstance(actual, (int, float))
                 ):
@@ -76,6 +78,8 @@ def check_report(
                 actual = resolve(evidence[bound.evidence_id], bound.path)
                 if bound.evidence_id not in citations or not isinstance(actual, str):
                     raise ValueError("not a cited timestamp")
+                if evidence[bound.evidence_id]["tool"] in KNOWLEDGE_TOOLS:
+                    raise ValueError("knowledge text is not an observed fault timestamp")
                 if utc_bound(actual) != utc_bound(bound.value):
                     raise ValueError("timestamp mismatch")
             except (KeyError, IndexError, TypeError, ValueError):

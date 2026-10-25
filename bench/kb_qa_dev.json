@@ -1,0 +1,251 @@
+{
+  "version": "kb-qa-v1",
+  "purpose": "development_retrieval",
+  "annotation_status": "project_authored_not_independently_reviewed",
+  "questions": [
+    {
+      "question_id": "KB001",
+      "question": "如何区分积灰缓降与单个低性能比？",
+      "reference_answer": "需要多日相对性能缓降和清洗恢复支持，单个低性能比不能确认积灰。",
+      "relevant_document_ids": [
+        "playbook-f1"
+      ]
+    },
+    {
+      "question_id": "KB002",
+      "question": "清洗恢复前应补取哪些证据？",
+      "reference_answer": "先排除缺测，使用故障前有效参考期、同站对比、日趋势及清洗前后的恢复阶跃。",
+      "relevant_document_ids": [
+        "playbook-f1"
+      ]
+    },
+    {
+      "question_id": "KB003",
+      "question": "两个时段发电量下降可以直接认定积灰吗？",
+      "reference_answer": "不可以，天气和时间窗长度也会改变发电量，应结合同站相对性能。",
+      "relevant_document_ids": [
+        "playbook-f1"
+      ]
+    },
+    {
+      "question_id": "KB004",
+      "question": "HSU soiling ratio 与 transmission loss 有何关系？",
+      "reference_answer": "HSU soiling ratio 等于一减透射损失；它是模型量，不是本站积灰真值。",
+      "relevant_document_ids": [
+        "pvlib-soiling-hsu"
+      ]
+    },
+    {
+      "question_id": "KB005",
+      "question": "局部遮挡为何需要检查站点时区？",
+      "reference_answer": "应按当地时间检查跨日窄时段重复损失，并核对夏令时和跨午夜窗口。",
+      "relevant_document_ids": [
+        "playbook-f2"
+      ]
+    },
+    {
+      "question_id": "KB006",
+      "question": "日内固定时段损失但其余时间恢复支持什么候选？",
+      "reference_answer": "在排除缺测、阴雨和停机后，可支持固定时段遮挡候选，仍需现场核实。",
+      "relevant_document_ids": [
+        "playbook-f2"
+      ]
+    },
+    {
+      "question_id": "KB007",
+      "question": "Row masking angle 在遮挡模型中代表什么？",
+      "reference_answer": "表示前排遮蔽天空的水平角度，沿排斜长取平均；不覆盖所有遮挡机制。",
+      "relevant_document_ids": [
+        "pvlib-shading-masking"
+      ]
+    },
+    {
+      "question_id": "KB008",
+      "question": "全天稳定比例损失与窄时段遮挡如何区分？",
+      "reference_answer": "窄时段多日重复且时段外恢复支持遮挡；全天非零稳定比例损失应排查组串失效及降额。",
+      "relevant_document_ids": [
+        "playbook-f2",
+        "playbook-f4"
+      ]
+    },
+    {
+      "question_id": "KB009",
+      "question": "逆变器功率为零和通讯缺测如何区分？",
+      "reference_answer": "先检查是否存在有效零功率记录，整设备多个测点缺失才支持通讯或采集异常候选。",
+      "relevant_document_ids": [
+        "playbook-f3",
+        "playbook-f6"
+      ]
+    },
+    {
+      "question_id": "KB010",
+      "question": "阴雨和夜间的零功率能认定停机吗？",
+      "reference_answer": "不能，需要有效高辐照及同期健康非零同站对照。",
+      "relevant_document_ids": [
+        "playbook-f3"
+      ]
+    },
+    {
+      "question_id": "KB011",
+      "question": "高辐照零输出可以直接确认逆变器硬件故障吗？",
+      "reference_answer": "不能，仍可能是计划停机、保护动作或电网限制，需要告警与运行日志。",
+      "relevant_document_ids": [
+        "playbook-f3"
+      ]
+    },
+    {
+      "question_id": "KB012",
+      "question": "Inverter outage 需要什么同站证据？",
+      "reference_answer": "目标输出相对独立同站设备近零，对照同期有有效非零输出，并排除缺测。",
+      "relevant_document_ids": [
+        "playbook-f3"
+      ]
+    },
+    {
+      "question_id": "KB013",
+      "question": "组串失效为什么不能仅靠交流功率确认断开组串数？",
+      "reference_answer": "当前缺少组串电流、电压及现场检查，交流功率比例损失只支持候选。",
+      "relevant_document_ids": [
+        "playbook-f4"
+      ]
+    },
+    {
+      "question_id": "KB014",
+      "question": "故障后重新定标 peer ratio 有什么问题？",
+      "reference_answer": "会用损失后的数据定义参考，掩盖阶跃；应选故障前有效参考时段。",
+      "relevant_document_ids": [
+        "playbook-f4"
+      ]
+    },
+    {
+      "question_id": "KB015",
+      "question": "稳定非零比例阶跃还要排除哪些混淆因素？",
+      "reference_answer": "需要排除固定时段遮挡、降额、限发、设备容量差异及全站共同条件。",
+      "relevant_document_ids": [
+        "playbook-f4"
+      ]
+    },
+    {
+      "question_id": "KB016",
+      "question": "String loss 候选如何交叉检查？",
+      "reference_answer": "先排除缺测与高辐照零值，结合故障前同站对比、形态和分期对比。",
+      "relevant_document_ids": [
+        "playbook-f4"
+      ]
+    },
+    {
+      "question_id": "KB017",
+      "question": "同站比值稳定是否足以排除辐照传感器漂移？",
+      "reference_answer": "不足以，稳定比值不能排除共模异常，仍需独立物理性能及多日共同趋势。",
+      "relevant_document_ids": [
+        "playbook-f5"
+      ]
+    },
+    {
+      "question_id": "KB018",
+      "question": "expected_power unavailable 可以作为漂移证据吗？",
+      "reference_answer": "不可以；缺少有出处的物理参数时不能借用知识库典型值伪造本站结果。",
+      "relevant_document_ids": [
+        "playbook-f5"
+      ]
+    },
+    {
+      "question_id": "KB019",
+      "question": "辐照传感器漂移候选应定位到哪类设备？",
+      "reference_answer": "应定位到相应 POA 传感器，不能任意定位到逆变器。",
+      "relevant_document_ids": [
+        "playbook-f5"
+      ]
+    },
+    {
+      "question_id": "KB020",
+      "question": "静态低性能比为何不能确认渐变漂移？",
+      "reference_answer": "静态偏差也可能由模型、积灰或限发造成；漂移需多日渐变及独立辐照或校准记录。",
+      "relevant_document_ids": [
+        "playbook-f5"
+      ]
+    },
+    {
+      "question_id": "KB021",
+      "question": "通讯中断检查为什么要核对设备全部可见测点？",
+      "reference_answer": "整设备通讯异常需同期所有可见测点缺失；只有交流功率缺失而其他测点在线时证据不足。",
+      "relevant_document_ids": [
+        "playbook-f6"
+      ]
+    },
+    {
+      "question_id": "KB022",
+      "question": "全部逆变器同时缺测应优先排查什么？",
+      "reference_answer": "应先排查全站采集问题，并核对至少两台同期对照是否仍有有效数据。",
+      "relevant_document_ids": [
+        "playbook-f6"
+      ]
+    },
+    {
+      "question_id": "KB023",
+      "question": "缺测片段列表被截断时可否视为完整缺失证明？",
+      "reference_answer": "不能，必须检查截断标记和实际覆盖范围，不能把截断列表当完整证明。",
+      "relevant_document_ids": [
+        "playbook-f6"
+      ]
+    },
+    {
+      "question_id": "KB024",
+      "question": "Communication gap 是否能确定是网络故障？",
+      "reference_answer": "不能仅凭整设备测点缺失区分网络、采集器、电源或日志处理故障，需要日志核实。",
+      "relevant_document_ids": [
+        "playbook-f6"
+      ]
+    },
+    {
+      "question_id": "KB025",
+      "question": "PVWatts DC 的 effective irradiance 和 pdc0 是什么？",
+      "reference_answer": "effective irradiance 是到达电池的有效辐照，pdc0 是组件参考条件下的直流功率。",
+      "relevant_document_ids": [
+        "pvlib-pvwatts-dc"
+      ]
+    },
+    {
+      "question_id": "KB026",
+      "question": "DC 和 inverter PVWatts 中 pdc0 的含义一样吗？",
+      "reference_answer": "不一样；DC 模型指组件参考条件功率，逆变器模型指逆变器直流输入功率限值。",
+      "relevant_document_ids": [
+        "pvlib-pvwatts-dc",
+        "pvlib-pvwatts-ac"
+      ]
+    },
+    {
+      "question_id": "KB027",
+      "question": "PVWatts inverter output AC clipping 如何表示？",
+      "reference_answer": "AC 输出受输入直流功率、转换效率及最大交流输出功率限制。",
+      "relevant_document_ids": [
+        "pvlib-pvwatts-ac"
+      ]
+    },
+    {
+      "question_id": "KB028",
+      "question": "Faiman 模型需要哪些环境输入？",
+      "reference_answer": "需要组件面辐照、空气温度、风速与经验散热参数，用于计算组件或电池温度。",
+      "relevant_document_ids": [
+        "pvlib-faiman"
+      ]
+    },
+    {
+      "question_id": "KB029",
+      "question": "Faiman 默认散热系数是否就是本站实测参数？",
+      "reference_answer": "不是，默认参数来自特定实测条件，不能据此认定本站参数已校准。",
+      "relevant_document_ids": [
+        "pvlib-faiman",
+        "playbook-f5"
+      ]
+    },
+    {
+      "question_id": "KB030",
+      "question": "HSU 积灰模型如何使用 rainfall 和 cleaning_threshold？",
+      "reference_answer": "将时段降雨累积与清洗阈值比较，用于模拟雨水清洗；需要实际降雨输入。",
+      "relevant_document_ids": [
+        "pvlib-soiling-hsu"
+      ]
+    }
+  ]
+}

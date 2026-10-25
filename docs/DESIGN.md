@@ -1,6 +1,6 @@
 # PV Diagnosis Agent · 设计文档
 
-> 版本：v0.1（2026-10-24）· 进度更新：2026-10-25，规则诊断链路、六类领域核验及 M2 开发候选已离线验证；DeepSeek 单场景已获授权，缺本机凭据，真实模型评测尚未执行
+> 版本：v0.1（2026-10-24）· 进度更新：2026-10-25，规则诊断链路、六类领域核验及知识库 BM25 开发链路已验证；混合检索尚缺真实模型实测，DeepSeek 单例已授权但缺本机凭据
 > 一句话：基于 LangGraph + MCP 的光伏电站时序故障诊断 Agent，在注入已知故障的公开数据上做可复现评测，并用固定评分器驱动 harness 自进化。
 
 ---
@@ -432,8 +432,9 @@ pv-diagnosis-agent/
 | 基线筛查与模拟 | 已实现缺测/日间零值/同站离群筛查、六类注入及双故障、真值与数据划分隔离校验；已生成 10 个 M1 冒烟场景及 80 个 M2 短窗开发候选，未注入候选不能作为正常真值 |
 | 只读 MCP 工具 | pv-data 4 个工具、pv-analytics 5 个工具均已接入 FastMCP / Pydantic；stdio、Streamable HTTP 实测通过；真实场景完成 90 次工具协议调用。2107 缺少可核实的单机物理参数，expected_power 返回 unavailable |
 | 诊断图与评分器 | 已接 LangGraph、原生 MCP 客户端、有界并行取证、结构与可选领域核验、离线自评接口及评分器 v1.1；B0 十场景结构/领域模式回归均为根因/定位 10/10、时间窗 9/10 |
+| 知识库 | 已核对许可并收录 5 份 pvlib 文档、6 份项目 Playbook；两项只读 MCP 工具、可选图接入及 30 题 BM25 开发检索评测已实跑。向量/BGE 仅有本地后端与替身测试，真实模型及 Ragas 尚未执行 |
 | M1 剩余工作 | DeepSeek 真实单场景验证及 10 场景 Agent 评测；当前 B0 数字不代表 LLM 成绩。后续还需可核实的物理参数与更完整的基线审核 |
-| M2 | 六类故障原语、短窗开发候选、正常候选隔离、双故障结构和领域必要证据核验已实现；正式基准集审核、知识库、审批、持久化及 LLM 消融尚未完成 |
+| M2 | 六类故障原语、短窗候选、领域核验及知识库首批语料/接口已实现；正式基准集、真实混合检索、Ragas、审批、持久化及 LLM 消融尚未完成 |
 | M3–M4 | 尚未实现；没有进化、泛化或完整消融结果 |
 
 ### 数据核验结论与处理边界
@@ -515,7 +516,7 @@ pv-diagnosis-agent/
 - 新增 `src/pvdiag/agent/`，状态定义、范围检查、MCP 网关、LangGraph、B0 reasoner、LLM reasoner 和单次诊断 CLI 分开；`harness/system_prompt.md` 作为版本化提示词。图为 `guard_in → plan → investigate → hypothesize → verify → report → guard_out`，结构校验失败或计划还需取证时回到 plan，最多三轮、默认最多三十次工具调用。轮次或预算耗尽仍不足时降级人工复核。
 - LangGraph **1.2.17**、LangChain **1.4.7**、langchain-openai **1.7.2** 已安装。**验证出的兼容性差异**：PyPI 最新 langchain-mcp-adapters **0.3.2** 要求 `mcp>=1.24,<2`，FastMCP **4.1.3** 要求 `mcp>=2.2,<3`，uv 无法同时解析。当前使用 FastMCP 原生 Client 连接两个服务，保持 MCP 协议和工具 schema；未强装冲突依赖。
 - 调用前校验节点工具白名单、Pydantic 参数、系统/设备/传感器和查询/参考时间范围；响应校验 schema、实际请求、稳定 evidence_id 哈希及两台服务的观测快照指纹。模型看不到原始 Parquet、场景 ID、基线筛查结果或注入真值。远端错误只保留类型，不把可能含凭据或路径的异常文本传入报告。
-- 报告采用定性置信度。每条结论要求至少两个不同的非元数据工具引用；数值通过 JSON Pointer 精确溯源，时间边界也须对应已有证据时间戳。定性摘要/理由禁止自由嵌入数字；结构核验失败会重试或清除不可信结论，返回 needs_review。默认仍为结构核验；本次新增可选领域必要证据核验和模型自评，详见后文。**这些检查不等于独立语义忠实度评测，完整混淆因素排除、知识检索和写操作审批仍未完成**。
+- 报告采用定性置信度。每条结论要求至少两个不同的非元数据观测工具引用；数值通过 JSON Pointer 精确溯源，时间边界也须对应已有观测证据时间戳。定性摘要/理由禁止自由嵌入数字；结构核验失败会重试或清除不可信结论，返回 needs_review。默认仍为结构核验；可选领域必要证据核验和模型自评见后文。**这些检查不等于独立语义忠实度评测，完整混淆因素排除、真实混合检索评测和写操作审批仍未完成**。
 - 当前使用进程内 InMemorySaver，已验证检查点保存和读取；没有声称实现跨进程持久化或 PostgresSaver。记忆、pv-ops、审批、中长期存储和服务化 API 仍属于后续工作。
 - B0 用纯代码从辐照摘要选择有足够日间点的参考期，再结合同站低值段/高辐照零值段、形态及分期对比生成可溯源假设，仅覆盖当前 F3/F4；其他情况保守输出 inconclusive，不能认定正常。B0 与 LLM reasoner 共享图及工具协议，但运行元数据明确区分模式。
 - DeepSeek 接口通过 `init_chat_model` 和 `with_structured_output(method="function_calling")` 接入，记录实际返回模型名、输入/输出 token 和缺失用量标记。每次输出最多 4096 token、禁用隐式自动重试、请求有超时与载荷字符上限。已完成真实 SDK 的 schema 构造及注入式离线模型测试，**没有发起收费调用**。调用须显式 `--allow-model-calls`；DeepSeek 默认只读取 `DEEPSEEK_API_KEY`，OpenAI 只读取 `OPENAI_API_KEY`，其他端点默认读取 `PVDIAG_LLM_API_KEY`，可用 `--credential-env` 显式指定字段；从环境或忽略的本地 `.env` 加载，不输出、不入库，不自动跨提供方回退。仅凭模型别名仍无法证明正式模型版本固定。
@@ -572,7 +573,7 @@ pv-diagnosis-agent/
 
 ### M2 领域核验、自评接口与调用预算
 
-- 新增 `agent/verification.py` 和 `harness/verification_prompt.md`，支持 `--verification structural|domain|domain_llm`。默认 `structural` 保持原结构检查；`domain` 叠加六类必要证据检查；`domain_llm` 再调用模型自评。问题及建议工具反馈到下一轮规划，最终输出守卫再次检查领域证据。未接知识库，不能据此称完整 A3 已实现。
+- 新增 `agent/verification.py` 和 `harness/verification_prompt.md`，支持 `--verification structural|domain|domain_llm`。默认 `structural` 保持原结构检查；`domain` 叠加六类必要证据检查；`domain_llm` 再调用模型自评。问题及建议工具反馈到下一轮规划，最终输出守卫再次检查领域证据。该批实现时尚未接知识库；后续 BM25 接入见下文，完整 A3 仍未实评。
 - 领域条件：F1 需多日缓降及清洗恢复；F2 需多日重复窄时段损失与时段外恢复；F3 需高辐照零值及同站近零；F4 需非零稳定比例损失并排除窄时段遮挡；F5 需 POA 质量、稳定同站关系和使用同参数计算的前后共同物理性能下降与多日趋势；F6 需目标全部可见测点缺失及至少两台同期有效对照。`expected_power=unavailable` 不能充当 F5 支持。
 - 正常结论需完整质量、同站对比、异常排查及独立物理性能支持；不能省略已发现异常，不能以正常平均值覆盖共同下降趋势。以上是**保守的必要条件，不是因果证明或独立语义 Judge**，不能证明已排除所有真实混淆因素。
 - `profile_pattern` 新增重复损失小时数、时段外中位比值、最大日恢复阶跃、恢复时刻和恢复前日斜率。重复小时须跨日出现，时段外统计包含这些小时之外的全部样本；恢复按 UTC 日中位数计算，恢复前斜率至少需三日。证据版本升为 `m2-v1`，其他工具版本保持原值。
@@ -582,3 +583,27 @@ pv-diagnosis-agent/
 - 已在真实 M1 十场景分别运行结构和领域模式：结果保存在 `data/eval/m1_structural_verification_regression/` 与 `data/eval/m1_domain_verification/`，两组根因/定位均 10/10、时间 IoU 达标 9/10，每场景 8 次工具调用。评分器仍为 v1.1，SHA-256 为 `64dd580859cd91893f654152565596338ba8d66e229759653c520e0298be8364`；没有调整评分标准，仍是 B0 成绩。
 - 真实短窗候选的已知假设组件检查记录于 `data/m2_known_window_verification.json`：F1 恢复证据不足、F2 重复时段证据不足、F5 物理/趋势证据不足，F6 通过。检查已知故障窗口不等于盲诊，不报告为六类 Agent 准确率；正常正式基准和留出集仍未就绪。
 - 最近检查未发现本机 `DEEPSEEK_API_KEY`，也没有 `data/runs/deepseek_authorized_pilot.json` 收据；因此真实请求为零，单场景授权尚未消耗。凭据就绪后仅执行既定 M1 单例，将报告、实际返回模型名及 token 用量写入该收据；不得自动重开预算或运行第二个场景。
+
+### 知识库语料、Playbook 与检索开发基线
+
+- `kb/SOURCES.md` 记录首批逐项许可核对。实际语料来自已安装 `pvlib==0.16.1` 的五个函数完整文档字符串，保留 BSD-3-Clause 版权、条件及免责声明；原始模块、收录内容及许可分别记录 SHA-256。未复制引用论文的正文，也未声称本轮已联网核对上游 tag 与发行包完全相同。`knowledge/build_corpus.py` 可在已有环境中离线、逐字节重建，只接受已核对版本与许可哈希。
+- `playbooks/F1.md` 至 `F6.md` 使用 SKILL.md frontmatter 格式，包含取证、混淆、无法判定边界与人工核实建议。它们由项目编写，不是独立专家标注或已确诊案例，不执行操作。manifest 区分第三方 BSD 语料与 `project-authored` 流程；项目整体开源许可仍未确定。
+- `KnowledgeStore` 只读 manifest 指定的固定目录，验证内容/许可哈希、大小、路径及重复项；不读取 `data/`、`bench/` 或诊断真值。启动后保持内容快照。知识指纹由语料清单、检索配置和检索实现源码哈希共同决定，与观测指纹分开。
+- 新增 `pv-knowledge` 的 `search_fault_kb`、`get_playbook` 两个 Pydantic/FastMCP 只读工具，默认 stdio，可通过本机 8003 端口提供 HTTP。Agent 默认仍只挂载两台观测服务，显式 `--knowledge-root kb` 才启用知识服务；网关在连接时固定知识指纹并逐响应验证。运行结果及评测摘要记录 `knowledge_source_sha256`。
+- 知识内容仅作为机理参考：两个知识工具不能满足报告的两个观测工具要求，检索分数不能作为设备测量值，文档日期不能作为故障时间。已更新 system prompt，并以结构守卫和测试落实这些边界；没有把检索到 Playbook 当作写操作权限。
+- BM25 支持拉丁词和中文单字/双字，查询求和顺序固定，跨进程证据 ID 一致。`hybrid_bge` 路径实现向量余弦检索、BM25/RRF 候选融合与本地 CrossEncoder 重排；模型目录内容哈希和运行时版本会进入配置，仅允许本地加载、禁用远程代码。构造参数已只读核对 sentence-transformers **v5.1.2** 的官方源码，但**尚未安装运行时或下载模型、核对模型权重许可、运行真实 BGE**，不能称混合检索已实测。缺失依赖或模型时显式失败，不静默回退 BM25 或调用在线嵌入服务。
+- 新增 `bench/kb_qa_dev.json` 的 **30 题**开发问答和 `eval/retrieval.py`。问题覆盖六类故障边界及物理模型假设，逐题记录参考回答和相关文档 ID；参考回答/标签不传入检索器。当前标签由项目编写，尚无独立专家复核。BM25、k=3 实跑的宏平均文档 Precision@3 为 **0.3556**、Recall@3 为 **0.95**、MRR 为 **0.9111**，原始结果在 `data/eval/kb_bm25_dev.json`。两项未完整召回涉及中文 Faiman 输入/系数问题，英文原文未进入前三；保留这些失败，不据此修改标签凑数。以上是文档 ID 重叠指标，**不是 Ragas context precision/recall、回答忠实度或故障准确率**。
+- 本批已验证知识工具的真实 stdio 与本机 HTTP 调用，HTTP 收据在 `data/runs/kb_http_smoke.json`；受控数据跑通“图规划 → 知识/观测并行取证 → 领域核验 → 报告”。真实 M1 在显式挂载知识服务的领域模式下回归，仍为根因/定位 10/10、时间窗 9/10、每场景 8 次工具调用，结果在 `data/eval/m1_knowledge_mount_regression/`。B0 不使用知识，因此该回归只证明挂载兼容，不能证明知识对诊断有提升，也不能算 A3 成绩；评分器 v1.1 未改。
+- 当前全套 **149 个测试通过**，Ruff、本轮 14 个 Python 文件的格式检查、`uv lock --check` 和差异空白检查通过。新增 26 个测试覆盖逐字节重建、双语检索/空结果、来源与许可、不可变快照、路径/符号链接越界、篡改与重复项、MCP/图接入、知识指纹隔离、知识不得替代测量或时间边界、融合/重排错误关闭，以及检索指标手算与标签隔离。全仓格式检查的原有下载器问题仍未改动；真实 BGE 尚未验证。
+
+复现已验证的开发链路（不调用外部模型）：
+
+```bash
+.venv/bin/python -m pvdiag.knowledge.build_corpus
+.venv/bin/python -m pvdiag.mcp_servers.pv_knowledge --transport http
+.venv/bin/python -m pvdiag.eval.retrieval --knowledge-root kb
+.venv/bin/python -m pvdiag.eval.run_bench --mode b0 --verification domain \
+  --knowledge-root kb --output data/eval/m1_knowledge_mount_regression
+```
+
+后续仍需准备并核对本地向量/BGE 模型、真实混合检索与 Ragas，完善独立语料/标签审核，并结合真实 LLM 评测完整 A3；审批、PostgresSaver、正式正常/留出基准和其余消融仍待开发。DeepSeek 单例授权不扩展为检索 Judge 或批量诊断调用。
