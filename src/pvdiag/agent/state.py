@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import datetime
 from typing import Literal, TypedDict
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, StrictBool, field_validator, model_validator
 
 from pvdiag.mcp_servers.models import Model, WindowRequest
 
@@ -105,6 +107,8 @@ class ToolTrace(Model):
     duration_seconds: float
     evidence_id: str | None = None
     error: str | None = None
+    action_id: str | None = None
+    approval_id: str | None = None
 
 
 class Scope(Model):
@@ -145,6 +149,103 @@ class VerificationRecord(Model):
     ready_for_verdict: bool
 
 
+class WorkOrderDraft(Model):
+    purpose: Literal["inspection_only"] = "inspection_only"
+    request: DiagRequest
+    report: DiagnosisReport
+    observation_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    harness_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    ops_policy_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    knowledge_source_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    evidence: dict[str, dict]
+
+    @model_validator(mode="after")
+    def concrete_fault(self):
+        if self.report.status != "fault":
+            raise ValueError("only supported fault reports may propose inspection work orders")
+        if set(self.evidence) != set(self.report.evidence_ids):
+            raise ValueError("work order snapshot must contain exactly the cited evidence")
+        if not self.evidence or any(
+            item.get("evidence_id") != key for key, item in self.evidence.items()
+        ):
+            raise ValueError("invalid work order evidence snapshot")
+        return self
+
+
+class PendingAction(Model):
+    action_id: str = Field(pattern=r"^act_[0-9a-f]{32}$")
+    run_id: str = Field(min_length=1, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$")
+    tool: Literal["create_work_order"] = "create_work_order"
+    payload: WorkOrderDraft
+    payload_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+    @classmethod
+    def propose(cls, run_id, payload):
+        digest = hashlib.sha256(
+            json.dumps(payload.model_dump(mode="json"), sort_keys=True, allow_nan=False).encode()
+        ).hexdigest()
+        action_id = "act_" + hashlib.sha256(f"{run_id}\0{digest}".encode()).hexdigest()[:32]
+        return cls(action_id=action_id, run_id=run_id, payload=payload, payload_sha256=digest)
+
+    @model_validator(mode="after")
+    def bound_content(self):
+        digest = hashlib.sha256(
+            json.dumps(
+                self.payload.model_dump(mode="json"), sort_keys=True, allow_nan=False
+            ).encode()
+        ).hexdigest()
+        expected = "act_" + hashlib.sha256(f"{self.run_id}\0{digest}".encode()).hexdigest()[:32]
+        if self.payload_sha256 != digest or self.action_id != expected:
+            raise ValueError("action content or identity was changed")
+        return self
+
+
+class ApprovalDecision(Model):
+    action_id: str = Field(pattern=r"^act_[0-9a-f]{32}$")
+    payload_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    approved: StrictBool
+    reviewer: str = Field(min_length=1, max_length=80, pattern=r"^[^\x00-\x1f\x7f]+$")
+    reason: str = Field(default="", max_length=1000)
+
+    @field_validator("reviewer")
+    @classmethod
+    def named_reviewer(cls, value):
+        if not value.strip():
+            raise ValueError("reviewer must be named")
+        return value.strip()
+
+
+class ApprovalRecord(ApprovalDecision):
+    approval_id: str = Field(pattern=r"^ap_[0-9a-f]{32}$")
+    decided_at: datetime
+
+
+class CreateWorkOrderRequest(Model):
+    action_id: str = Field(pattern=r"^act_[0-9a-f]{32}$")
+    payload_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    approval_id: str = Field(pattern=r"^ap_[0-9a-f]{32}$")
+
+
+class WorkOrderReceipt(CreateWorkOrderRequest):
+    work_order_id: str = Field(pattern=r"^wo_[0-9a-f]{32}$")
+    status: Literal["created"] = "created"
+    created_at: datetime
+
+
+class ActionOutcome(Model):
+    status: Literal[
+        "not_needed", "pending", "rejected", "invalid_approval", "blocked", "created", "failed"
+    ]
+    receipt: WorkOrderReceipt | None = None
+    error: str | None = None
+
+    @model_validator(mode="after")
+    def consistent_receipt(self):
+        if (self.status == "created") != (self.receipt is not None):
+            raise ValueError("only a created action may carry a work order receipt")
+        return self
+
+
 class RunResult(Model):
     request: DiagRequest
     report: DiagnosisReport
@@ -159,6 +260,11 @@ class RunResult(Model):
     verification: list[VerificationRecord] = Field(default_factory=list)
     verification_policy_sha256: str | None = None
     knowledge_source_sha256: str | None = None
+    ops_enabled: bool = False
+    pending_action: PendingAction | None = None
+    approval: ApprovalRecord | None = None
+    action_outcome: ActionOutcome | None = None
+    ops_policy_sha256: str | None = None
 
 
 class DiagState(TypedDict, total=False):
@@ -173,3 +279,6 @@ class DiagState(TypedDict, total=False):
     result: RunResult
     started_at: float
     verification: list[VerificationRecord]
+    pending_action: PendingAction | None
+    approval: ApprovalRecord | None
+    action_outcome: ActionOutcome | None

@@ -1,6 +1,6 @@
 # PV Diagnosis Agent · 设计文档
 
-> 版本：v0.1（2026-10-24）· 进度更新：2026-10-25，规则诊断、领域核验及本地 BGE 混合检索已实跑；Ragas/完整 A3 尚未评测，DeepSeek 单例已授权但缺本机凭据
+> 版本：v0.1（2026-10-24）· 进度更新：2026-10-25，规则诊断、本地 BGE 检索及本地模拟工单审批已验证；PostgresSaver、Ragas/完整 A3 尚未完成，DeepSeek 单例已授权但缺本机凭据
 > 一句话：基于 LangGraph + MCP 的光伏电站时序故障诊断 Agent，在注入已知故障的公开数据上做可复现评测，并用固定评分器驱动 harness 自进化。
 
 ---
@@ -431,10 +431,11 @@ pv-diagnosis-agent/
 | 2107 实际数据验证 | 原始 electrical、irradiance、environment、meter 四份 CSV；筛选 UTC `[2019-01-01, 2021-01-01)`，生成 **5,383,405** 条长表记录、24 台逆变器及电表/气象测点 |
 | 基线筛查与模拟 | 已实现缺测/日间零值/同站离群筛查、六类注入及双故障、真值与数据划分隔离校验；已生成 10 个 M1 冒烟场景及 80 个 M2 短窗开发候选，未注入候选不能作为正常真值 |
 | 只读 MCP 工具 | pv-data 4 个工具、pv-analytics 5 个工具均已接入 FastMCP / Pydantic；stdio、Streamable HTTP 实测通过；真实场景完成 90 次工具协议调用。2107 缺少可核实的单机物理参数，expected_power 返回 unavailable |
-| 诊断图与评分器 | 已接 LangGraph、原生 MCP 客户端、有界并行取证、结构与可选领域核验、离线自评接口及评分器 v1.1；B0 十场景结构/领域模式回归均为根因/定位 10/10、时间窗 9/10 |
+| 诊断图与评分器 | 已接 LangGraph、有界 MCP 取证、结构/领域核验及离线自评接口；评分器 v1.2 新增知识只读分类和审批记录一致性检查，B0 十场景仍为根因/定位 10/10、时间窗 9/10 |
 | 知识库 | 已核对许可并收录 5 份 pvlib 文档、6 份项目 Playbook；两项 MCP 工具、可选图接入和 30 题 BM25/BGE 对比已实跑。混合检索文档 Recall@3 为 1.0、MRR 为 0.9833；自编标签、不是 Ragas 或 A3 成绩 |
 | M1 剩余工作 | DeepSeek 真实单场景验证及 10 场景 Agent 评测；当前 B0 数字不代表 LLM 成绩。后续还需可核实的物理参数与更完整的基线审核 |
-| M2 | 六类故障原语、短窗候选、领域核验、知识库和本地混合检索已实现；正式基准集、Ragas、审批、持久化及 LLM 消融尚未完成 |
+| 人工审批与模拟工单 | `interrupt` / `Command(resume=...)` 和本地 CLI 已接通；工单默认关闭，SQLite 持久化具体草案、人工决定和幂等工单，拒绝/篡改/重放路径已测试 |
+| M2 | 六类原语、短窗候选、领域核验、知识库/混合检索及本地工单审批已实现；正式基准集、Ragas、审批 API、PostgresSaver 与 LLM 消融尚未完成 |
 | M3–M4 | 尚未实现；没有进化、泛化或完整消融结果 |
 
 ### 数据核验结论与处理边界
@@ -516,8 +517,8 @@ pv-diagnosis-agent/
 - 新增 `src/pvdiag/agent/`，状态定义、范围检查、MCP 网关、LangGraph、B0 reasoner、LLM reasoner 和单次诊断 CLI 分开；`harness/system_prompt.md` 作为版本化提示词。图为 `guard_in → plan → investigate → hypothesize → verify → report → guard_out`，结构校验失败或计划还需取证时回到 plan，最多三轮、默认最多三十次工具调用。轮次或预算耗尽仍不足时降级人工复核。
 - LangGraph **1.2.17**、LangChain **1.4.7**、langchain-openai **1.7.2** 已安装。**验证出的兼容性差异**：PyPI 最新 langchain-mcp-adapters **0.3.2** 要求 `mcp>=1.24,<2`，FastMCP **4.1.3** 要求 `mcp>=2.2,<3`，uv 无法同时解析。当前使用 FastMCP 原生 Client 连接两个服务，保持 MCP 协议和工具 schema；未强装冲突依赖。
 - 调用前校验节点工具白名单、Pydantic 参数、系统/设备/传感器和查询/参考时间范围；响应校验 schema、实际请求、稳定 evidence_id 哈希及两台服务的观测快照指纹。模型看不到原始 Parquet、场景 ID、基线筛查结果或注入真值。远端错误只保留类型，不把可能含凭据或路径的异常文本传入报告。
-- 报告采用定性置信度。每条结论要求至少两个不同的非元数据观测工具引用；数值通过 JSON Pointer 精确溯源，时间边界也须对应已有观测证据时间戳。定性摘要/理由禁止自由嵌入数字；结构核验失败会重试或清除不可信结论，返回 needs_review。默认仍为结构核验；可选领域必要证据核验和模型自评见后文。**这些检查不等于独立语义忠实度评测，完整混淆因素排除、Ragas 和写操作审批仍未完成**。
-- 当前使用进程内 InMemorySaver，已验证检查点保存和读取；没有声称实现跨进程持久化或 PostgresSaver。记忆、pv-ops、审批、中长期存储和服务化 API 仍属于后续工作。
+- 报告采用定性置信度。每条结论要求至少两个不同的非元数据观测工具引用；数值通过 JSON Pointer 精确溯源，时间边界也须对应已有观测证据时间戳。定性摘要/理由禁止自由嵌入数字；结构核验失败会重试或清除不可信结论，返回 needs_review。默认仍为结构核验；可选领域核验和模型自评见后文。**这些检查不等于独立语义忠实度评测，完整混淆因素排除和 Ragas 仍未完成**。
+- 诊断检查点当前仍用进程内 InMemorySaver，没有跨进程恢复或 PostgresSaver。后续已加入本地工单审批及 SQLite 工单台账，详见末节；该台账不能替代诊断检查点持久化。长期记忆、审批 HTTP API 与服务化仍待开发。
 - B0 用纯代码从辐照摘要选择有足够日间点的参考期，再结合同站低值段/高辐照零值段、形态及分期对比生成可溯源假设，仅覆盖当前 F3/F4；其他情况保守输出 inconclusive，不能认定正常。B0 与 LLM reasoner 共享图及工具协议，但运行元数据明确区分模式。
 - DeepSeek 接口通过 `init_chat_model` 和 `with_structured_output(method="function_calling")` 接入，记录实际返回模型名、输入/输出 token 和缺失用量标记。每次输出最多 4096 token、禁用隐式自动重试、请求有超时与载荷字符上限。已完成真实 SDK 的 schema 构造及注入式离线模型测试，**没有发起收费调用**。调用须显式 `--allow-model-calls`；DeepSeek 默认只读取 `DEEPSEEK_API_KEY`，OpenAI 只读取 `OPENAI_API_KEY`，其他端点默认读取 `PVDIAG_LLM_API_KEY`，可用 `--credential-env` 显式指定字段；从环境或忽略的本地 `.env` 加载，不输出、不入库，不自动跨提供方回退。仅凭模型别名仍无法证明正式模型版本固定。
 - 新增 `src/pvdiag/eval/scorer.py`（v1）与 `run_bench.py`。评分器为纯代码并记录源码 SHA-256：场景检测 P/R/F1、根因 Top-1/Top-3、设备定位、根因与设备联合匹配、同设备同根因的时间 IoU 命中、拒答、数值引用、工具成功率和用量。双故障使用最大一一匹配并惩罚多报；根因与设备各自正确但对应错误时联合指标为错。只有正常样本才计算误报率，缺失 token 用量标为未知，不填零；LLM-as-Judge 与价格未接入时保持 null。
@@ -569,7 +570,7 @@ pv-diagnosis-agent/
   --per-type 10 --normal-count 20
 ```
 
-后续继续正常基线审核、长窗口数据、六类判别工具/规则、知识库与人工审批；DeepSeek 单场景调用授权已取得，目前等待本机安全凭据。
+后续继续正常基线审核、长窗口数据和六类判别工具/规则；知识库与本地审批的后续进度见下文。DeepSeek 单场景调用授权已取得，目前等待本机安全凭据。
 
 ### M2 领域核验、自评接口与调用预算
 
@@ -606,7 +607,7 @@ pv-diagnosis-agent/
   --knowledge-root kb --output data/eval/m1_knowledge_mount_regression
 ```
 
-后续仍需 Ragas、独立语料/标签审核，并结合真实 LLM 评测完整 A3；审批、PostgresSaver、正式正常/留出基准和其余消融仍待开发。DeepSeek 单例授权不扩展为检索 Judge 或批量诊断调用。
+后续仍需 Ragas、独立语料/标签审核，并结合真实 LLM 评测完整 A3；审批 API、PostgresSaver、正式正常/留出基准和其余消融仍待开发。本地工单审批进度见末节。DeepSeek 单例授权不扩展为检索 Judge 或批量诊断调用。
 
 ### 真实本地 BGE 准备与混合检索对比
 
@@ -638,3 +639,29 @@ HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 .venv/bin/python -m pvdiag.eval.retrieva
   --reranker-model-path data/models/bge-reranker-base \
   --output data/eval/kb_bge_dev.json
 ```
+
+### 人工审批、SQLite 工单台账与写操作审计
+
+- 新增 `ops/store.py`、`ops/gateway.py` 和 `mcp_servers/pv_ops.py`。写服务只有 `create_work_order` 一个工具，不能通过 MCP 注册草案、批准动作或更改审批记录；只模拟本地人工核查工单，不连接设备控制或外部工单系统。读工具网关与模型规划清单不接入该写工具。
+- 默认不加载写服务。CLI 须显式 `--enable-ops`，可用 `--ops-db` 选择台账，否则使用忽略的 `data/ops/work_orders.sqlite3`。单独设置 `--ops-db` 会拒绝启动；程序入口传入 `ops_store` 时必须同时提供可信的人工审批处理器，默认没有自动批准回调。
+- 图增加 `propose_action → approval[interrupt] → act`，未启用、无故障、证据不足时直接报告。即使诊断选择结构模式，工单草案也必须额外通过领域必要证据检查。草案包含请求、具体报告、全部引用证据及观测/知识/提示词/运维策略指纹；动作 ID 绑定 run_id 和草案摘要。审批响应须带匹配的动作 ID、摘要、严格布尔决定与审批人，字符串 true/false、数字、空审批人、其他动作的决定均无效。
+- CLI 展示具体草案并等待手工输入 `approve`；其他输入或 EOF 都按未批准处理。`Command(resume=...)` 的决定记录到 SQLite；拒绝决定也保存，既有决定不能静默替换。程序调用者的审批处理器和本地 OS 用户属于可信控制面，本轮没有实现远程身份认证、审批 HTTP API 或 Gradio 审批按钮，不能把任意模型输出当成人工身份。
+- `act` 在请求写服务前再次核对当前报告、证据和策略是否仍与获批快照一致；暂停期间修改报告会阻断写入。服务端只从台账读取已注册的具体内容，检查审批 ID、决定及内容摘要，不接收调用者替换设备或报告。SQLite 外键、事务及动作唯一约束保证同一动作只产生一张工单；重复调用返回原收据和创建时间。审批记录、草案及工单可在重新打开数据库后读取。
+- `RunResult` 增加动作草案、审批记录、动作结果及 `ops_policy_sha256`；运维指纹覆盖图、状态、CLI、台账、写网关和服务源码，并纳入草案摘要。写调用轨迹记录动作/审批 ID；错误只保留类型。诊断结论与动作结果分开：拒绝工单不抹去已有诊断，RPC 失败也不等于服务端肯定未落库，同一动作可幂等核对或重试。
+- 新功能暴露了 v1.1 评分器的工具分类限制：它只认识原先九项只读工具，会把知识检索和全部成功工单都计成未审批写入。因此本次做**工程版升级至 v1.2**，增加两个知识只读工具，并检查成功工单轨迹、草案、审批、收据与运行上下文的完整绑定；仅有同名工具、批准标志或不匹配记录不能免责。故障检测、根因/设备匹配、时间 IoU 与数值引用规则不变，没有因样本成绩而放宽阈值；旧版产物保留。该检查验证可信执行记录的一致性，不独立认证审批人身份，实际执行授权由台账实施；仍不允许自进化修改评分器。
+- 全套 **180 个测试通过**，其中新增 **18 个**覆盖默认关闭、真实中断/恢复、拒绝/错误决定、领域不足、报告篡改、跨动作/跨 run 审批、数据库重开、12 次并发重试、提交后响应丢失重试、真实 stdio 服务及 CLI EOF 拒绝；评分测试另核对知识工具分类、已批准操作及损坏审批链的区别。全部批准样例都属于临时目录中的受控测试，不表示真实电站工单已经获批，也没有触发生产操作或收费调用。
+- Ruff、本轮 10 个 Python 文件的格式检查、`uv lock --check` 和差异空白检查通过，未新增依赖。v1.2 评分器 SHA-256 为 `03acd7aafa7b0d0eb83ea4120a3fd887b38a7ef5bc8298903c99edb740fc0670`；当前工程规则固定在此版本，后续自进化不得修改。
+- 真实 M1 默认只读领域模式在 `data/eval/m1_scorer_v1_2_regression/` 回归，根因/定位仍 10/10、时间窗 9/10、每场景 8 次工具调用、写入数为零；与 v1.1 的诊断指标保持一致。SQLite 台账持久化与 InMemorySaver 是不同层：本轮**没有**实现审批等待期间进程重启后的图恢复，后续按设计接 PostgresSaver。
+
+本地交互入口（会等待人工确认；不自动批准）：
+
+```bash
+.venv/bin/python -m pvdiag.agent 2107 \
+  --observations data/scenarios/S2107-F3-0001/timeseries.parquet \
+  --metadata data/raw/2107/metadata/2107_system_metadata.json \
+  --devices inv03 inv04 inv05 --start 2019-01-08 --end 2019-01-15 \
+  --verification domain --enable-ops \
+  --output data/runs/interactive_inspection.json
+```
+
+当前这条命令默认使用 B0，不触发外部模型；本轮未代替用户在真实场景批准工单。后续继续 PostgresSaver、审批/API 身份边界、Ragas、正常基准和完整消融，项目仍在开发。

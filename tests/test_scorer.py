@@ -134,7 +134,9 @@ def test_invalid_numeric_claims_unknown_usage_and_write_traces_are_visible():
     response.report.findings[0].numbers[0].value = 999
     response.model_usage["usage_missing_calls"] = 1
     response.trace = [
-        ToolTrace(name="create_work_order", node="act", success=True, duration_seconds=0.1)
+        ToolTrace(name="create_work_order", node="act", success=True, duration_seconds=0.1),
+        ToolTrace(name="search_fault_kb", node="investigate", success=True, duration_seconds=0.1),
+        ToolTrace(name="get_playbook", node="investigate", success=True, duration_seconds=0.1),
     ]
     case = score_case(truth(), response)
     metrics = aggregate([case])
@@ -187,7 +189,7 @@ def test_irradiance_fault_localization_uses_observed_poa_sensor_not_inverter_sco
     }
     scored = score_case(actual, result)
     assert scored["device_correct"] and scored["joint_root_device_correct"]
-    assert aggregate([scored])["scorer_version"] == "v1.1"
+    assert aggregate([scored])["scorer_version"] == "v1.2"
     actual["faults"][0]["device_id"] = "other_sensor"
     with pytest.raises(ValueError, match="outside request"):
         score_case(actual, result)

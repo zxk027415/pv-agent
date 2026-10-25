@@ -1,19 +1,23 @@
-"""Run a single read-only diagnosis; network model calls require an explicit flag."""
+"""Run one diagnosis; model calls and human-approved local orders are opt-in."""
 
 import argparse
 import asyncio
+import getpass
+import json
 import os
 import re
+from contextlib import AsyncExitStack
 from pathlib import Path
 from urllib.parse import urlsplit
 from uuid import uuid4
 
 from dotenv import dotenv_values
+from langgraph.types import Command
 
 from pvdiag.agent.gateway import MCPGateway
 from pvdiag.agent.graph import build_graph
 from pvdiag.agent.rules import RuleReasoner
-from pvdiag.agent.state import DiagRequest
+from pvdiag.agent.state import ApprovalDecision, DiagRequest
 from pvdiag.mcp_servers.pv_analytics import create_server as analytics_server
 from pvdiag.mcp_servers.pv_data import create_server as data_server
 from pvdiag.mcp_servers.pv_knowledge import (
@@ -80,25 +84,63 @@ async def run_diagnosis(
     max_loops=3,
     verification_mode="structural",
     knowledge_store=None,
+    ops_store=None,
+    approval_handler=None,
 ):
-    async with MCPGateway.connect(
-        data_server(store),
-        analytics_server(store),
-        knowledge_server(knowledge_store) if knowledge_store else None,
-        knowledge_source_sha256=knowledge_store.source_sha256 if knowledge_store else None,
-    ) as gateway:
+    if (ops_store is None) != (approval_handler is None):
+        raise ValueError("operations require an explicit trusted human approval handler")
+    async with AsyncExitStack() as stack:
+        gateway = await stack.enter_async_context(
+            MCPGateway.connect(
+                data_server(store),
+                analytics_server(store),
+                knowledge_server(knowledge_store) if knowledge_store else None,
+                knowledge_source_sha256=knowledge_store.source_sha256 if knowledge_store else None,
+            )
+        )
+        ops = None
+        if ops_store is not None:
+            from pvdiag.mcp_servers.pv_ops import create_server as ops_server
+            from pvdiag.ops.gateway import OpsGateway
+
+            ops = await stack.enter_async_context(
+                OpsGateway.connect(ops_server(ops_store), ops_store)
+            )
         graph = build_graph(
             gateway,
             reasoner,
             max_calls=max_calls,
             max_loops=max_loops,
             verification_mode=verification_mode,
+            ops_gateway=ops,
         )
+        config = {"configurable": {"thread_id": str(uuid4())}, "recursion_limit": 40}
         state = await graph.ainvoke(
             {"request": request},
-            config={"configurable": {"thread_id": str(uuid4())}, "recursion_limit": 40},
+            config=config,
         )
+        if state.get("__interrupt__"):
+            decision = await approval_handler(state["__interrupt__"][0].value)
+            if isinstance(decision, ApprovalDecision):
+                decision = decision.model_dump(mode="json")
+            state = await graph.ainvoke(Command(resume=decision), config=config)
         return state["result"]
+
+
+async def console_approval(payload):
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    try:
+        answer = await asyncio.to_thread(input, "输入 approve 批准此本地核查工单；其他输入拒绝：")
+    except EOFError:
+        answer = "reject"
+    proposal = payload["proposal"]
+    return ApprovalDecision(
+        action_id=proposal["action_id"],
+        payload_sha256=proposal["payload_sha256"],
+        approved=answer.strip() == "approve",
+        reviewer=getpass.getuser(),
+        reason="本地 CLI 人工确认" if answer.strip() == "approve" else "本地 CLI 未批准",
+    )
 
 
 def main(argv=None):
@@ -112,11 +154,26 @@ def main(argv=None):
     parser.add_argument("--output", type=Path, default=Path("data/runs/diagnosis.json"))
     add_model_arguments(parser)
     add_knowledge_arguments(parser)
+    parser.add_argument(
+        "--enable-ops",
+        action="store_true",
+        help="explicitly enable simulated local work orders with interactive human approval",
+    )
+    parser.add_argument(
+        "--ops-db", type=Path, help="local work-order ledger; requires --enable-ops"
+    )
     args = parser.parse_args(argv)
+    if args.ops_db and not args.enable_ops:
+        parser.error("--ops-db requires --enable-ops")
     request = DiagRequest(
         system_id=args.system_id, device_ids=args.devices, start=args.start, end=args.end
     )
     reasoner = reasoner_from_args(args)
+    ops_store = None
+    if args.enable_ops:
+        from pvdiag.ops.store import WorkOrderStore
+
+        ops_store = WorkOrderStore(args.ops_db or Path("data/ops/work_orders.sqlite3"))
     result = asyncio.run(
         run_diagnosis(
             ObservationStore(args.observations, args.metadata),
@@ -124,6 +181,8 @@ def main(argv=None):
             reasoner,
             verification_mode=args.verification,
             knowledge_store=knowledge_from_args(args),
+            ops_store=ops_store,
+            approval_handler=console_approval if args.enable_ops else None,
         )
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)

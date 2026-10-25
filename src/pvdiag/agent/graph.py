@@ -1,4 +1,4 @@
-"""M1 LangGraph: scope → plan → parallel evidence → hypothesis → checks → report."""
+"""Bounded diagnosis with optional human-approved local inspection orders."""
 
 from __future__ import annotations
 
@@ -10,19 +10,24 @@ from time import perf_counter
 
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
+from langgraph.types import interrupt
 
 from pvdiag.agent.guards import check_report, degrade
 from pvdiag.agent.state import (
+    ActionOutcome,
+    ApprovalDecision,
     DiagnosisReport,
     DiagRequest,
     DiagState,
     ModelReview,
+    PendingAction,
     Plan,
     RunResult,
     Scope,
     ToolCall,
     VerificationIssue,
     VerificationRecord,
+    WorkOrderDraft,
 )
 from pvdiag.agent.verification import check_domain
 
@@ -40,6 +45,7 @@ def build_graph(
     prompt_path=DEFAULT_PROMPT,
     verification_mode="structural",
     review_prompt_path=DEFAULT_REVIEW_PROMPT,
+    ops_gateway=None,
 ):
     if not 2 <= max_calls <= 100 or not 1 <= max_loops <= 3:
         raise ValueError("invalid execution budget")
@@ -55,6 +61,22 @@ def build_graph(
             Path(__file__).with_name(name).read_bytes() for name in ("guards.py", "verification.py")
         )
     ).hexdigest()
+    ops_policy_sha = None
+    if ops_gateway is not None:
+        root = Path(__file__).resolve().parents[1]
+        ops_policy_sha = hashlib.sha256(
+            b"\0".join(
+                (root / name).read_bytes()
+                for name in (
+                    "agent/graph.py",
+                    "agent/__main__.py",
+                    "agent/state.py",
+                    "ops/store.py",
+                    "ops/gateway.py",
+                    "mcp_servers/pv_ops.py",
+                )
+            )
+        ).hexdigest()
 
     async def guard_in(state: DiagState):
         started = perf_counter()
@@ -112,6 +134,9 @@ def build_graph(
             "critique": [],
             "started_at": started,
             "verification": [],
+            "pending_action": None,
+            "approval": None,
+            "action_outcome": None,
         }
 
     async def plan(state):
@@ -210,8 +235,85 @@ def build_graph(
         return (
             "plan"
             if repeat and state["loops"] < max_loops and len(state["trace"]) < max_calls
-            else "report"
+            else "propose_action"
         )
+
+    def action_draft(state):
+        if state["critique"] or not state["plan"].ready_for_verdict:
+            raise ValueError("diagnosis not ready for an action")
+        verdict = state["verdict"]
+        if (
+            verdict.status != "fault"
+            or check_report(verdict, state["evidence"], state["request"], state["scope"])
+            or check_domain(verdict, state["evidence"], state["request"], state["scope"])
+        ):
+            raise ValueError("inspection action requires structurally and domain-supported faults")
+        return WorkOrderDraft(
+            request=state["request"],
+            report=verdict,
+            observation_source_sha256=state["scope"].source_sha256,
+            harness_sha256=harness_sha,
+            ops_policy_sha256=ops_policy_sha,
+            knowledge_source_sha256=gateway.knowledge_source_sha256,
+            evidence={key: state["evidence"][key] for key in verdict.evidence_ids},
+        )
+
+    def propose_action(state, config):
+        if ops_gateway is None:
+            return {}
+        if state["verdict"].status != "fault":
+            return {"action_outcome": ActionOutcome(status="not_needed")}
+        try:
+            draft = action_draft(state)
+            proposal = PendingAction.propose(config["configurable"]["thread_id"], draft)
+            ops_gateway.store.register(proposal)
+            return {"pending_action": proposal, "action_outcome": ActionOutcome(status="pending")}
+        except (ValueError, KeyError, RuntimeError):
+            return {"action_outcome": ActionOutcome(status="blocked", error="action_not_supported")}
+
+    def approval(state):
+        proposal = state["pending_action"]
+        response = interrupt(
+            {
+                "kind": "work_order_approval",
+                "message": "请核对具体报告与证据。批准仅创建本地人工核查工单，不控制设备。",
+                "proposal": proposal.model_dump(mode="json"),
+            }
+        )
+        try:
+            decision = ApprovalDecision.model_validate(response)
+            record = ops_gateway.store.decide(proposal, decision)
+            return {
+                "approval": record,
+                "action_outcome": ActionOutcome(
+                    status="pending" if record.approved else "rejected"
+                ),
+            }
+        except (ValueError, TypeError, RuntimeError):
+            return {
+                "approval": None,
+                "action_outcome": ActionOutcome(
+                    status="invalid_approval", error="approval_invalid_or_mismatched"
+                ),
+            }
+
+    async def act(state):
+        try:
+            proposal = PendingAction.model_validate(state["pending_action"].model_dump())
+            current = PendingAction.propose(proposal.run_id, action_draft(state))
+            if current != proposal:
+                raise ValueError("approved action no longer matches the current diagnosis")
+        except (ValueError, KeyError, TypeError):
+            return {
+                "action_outcome": ActionOutcome(status="blocked", error="approved_payload_changed")
+            }
+        receipt, trace = await ops_gateway.create(proposal, state["approval"])
+        return {
+            "action_outcome": ActionOutcome(status="created", receipt=receipt)
+            if receipt
+            else ActionOutcome(status="failed", error="work_order_call_failed"),
+            "trace": [*state["trace"], trace],
+        }
 
     def report(state):
         verdict = (
@@ -243,6 +345,11 @@ def build_graph(
             verification=state["verification"],
             verification_policy_sha256=policy_sha,
             knowledge_source_sha256=gateway.knowledge_source_sha256,
+            ops_enabled=ops_gateway is not None,
+            pending_action=state.get("pending_action"),
+            approval=state.get("approval"),
+            action_outcome=state.get("action_outcome"),
+            ops_policy_sha256=ops_policy_sha,
         )
         return {"verdict": verdict, "result": result}
 
@@ -253,6 +360,9 @@ def build_graph(
         ("investigate", investigate),
         ("hypothesize", hypothesize),
         ("verify", verify),
+        ("propose_action", propose_action),
+        ("approval", approval),
+        ("act", act),
         ("report", report),
         ("guard_out", guard_out),
     ):
@@ -262,7 +372,17 @@ def build_graph(
     graph.add_edge("plan", "investigate")
     graph.add_edge("investigate", "hypothesize")
     graph.add_edge("hypothesize", "verify")
-    graph.add_conditional_edges("verify", route, {"plan": "plan", "report": "report"})
+    graph.add_conditional_edges(
+        "verify", route, {"plan": "plan", "propose_action": "propose_action"}
+    )
+    graph.add_conditional_edges(
+        "propose_action", lambda state: "approval" if state.get("pending_action") else "report"
+    )
+    graph.add_conditional_edges(
+        "approval",
+        lambda state: "act" if state.get("approval") and state["approval"].approved else "report",
+    )
+    graph.add_edge("act", "report")
     graph.add_edge("report", "guard_out")
     graph.add_edge("guard_out", END)
     return graph.compile(checkpointer=checkpointer or InMemorySaver())
