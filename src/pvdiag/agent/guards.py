@@ -49,7 +49,8 @@ def check_report(
         tools = {evidence[key]["tool"] for key in citations if key in evidence}
         if len(tools - {"list_devices", "get_site_info"}) < 2:
             issues.append("insufficient_distinct_tools")
-        if finding.device_id not in scope.device_ids:
+        allowed = {scope.poa_device_id} if finding.fault_type == "F5" else set(scope.device_ids)
+        if finding.device_id not in allowed:
             issues.append("finding_device_outside_scope")
         if finding.window.start.value < request.start or finding.window.end.value > request.end:
             issues.append("finding_window_outside_scope")

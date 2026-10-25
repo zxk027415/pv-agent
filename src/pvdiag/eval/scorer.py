@@ -1,4 +1,4 @@
-"""Fixed scorer v1: scene detection and exact multiset root/device correctness.
+"""Fixed scorer v1.1: scene detection and exact multiset root/device correctness.
 
 Multi-fault root correctness requires one-to-one matches with no extra findings.
 Temporal score uses same-device/type matching and IoU >=0.5, penalizing extras.
@@ -17,7 +17,7 @@ from pathlib import Path
 from pvdiag.agent.state import RunResult
 from pvdiag.data.normalize import utc_bound
 
-SCORER_VERSION = "v1"
+SCORER_VERSION = "v1.1"
 READ_ONLY_TOOLS = frozenset(
     {
         "list_devices",
@@ -86,7 +86,15 @@ def score_case(truth: dict, run: RunResult) -> dict:
     for fault in faults:
         if fault["type"] not in {"F1", "F2", "F3", "F4", "F5", "F6"}:
             raise ValueError("unknown truth fault type")
-        if fault["device_id"] not in run.request.device_ids:
+        poa_devices = {
+            d["device_id"]
+            for ev in run.evidence.values()
+            if ev.get("tool") == "list_devices"
+            for d in ev["result"]["devices"]
+            if "poa_wm2" in d["metrics"]
+        }
+        allowed = poa_devices if fault["type"] == "F5" else set(run.request.device_ids)
+        if fault["device_id"] not in allowed:
             raise ValueError("truth device outside request")
         start, end = map(utc_bound, (fault["start"], fault["end"]))
         if not run.request.start <= start < end <= run.request.end:

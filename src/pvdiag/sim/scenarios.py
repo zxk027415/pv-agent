@@ -1,4 +1,4 @@
-"""Generate a deterministic, development-only F3/F4 smoke set on screened data.
+"""Validated scenes and the legacy deterministic F3/F4 development smoke set.
 
 No normal-scene labels or held-out evaluation results are produced. Scenario
 truth is stored separately from the observation parquet consumed by a diagnosis.
@@ -35,8 +35,11 @@ class Scenario:
     poa_device_id: str
     faults: tuple[FaultSpec, ...]
     split: str = "dev"
+    difficulty: str = "easy"
 
     def __post_init__(self):
+        object.__setattr__(self, "device_ids", tuple(self.device_ids))
+        object.__setattr__(self, "faults", tuple(self.faults))
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,99}", self.scenario_id):
             raise ValueError("invalid scenario_id")
         if self.split not in {"dev", "test", "cross_site"}:
@@ -47,27 +50,45 @@ class Scenario:
         object.__setattr__(self, "query_window", (lower.isoformat(), upper.isoformat()))
         if len(self.device_ids) < 3 or len(set(self.device_ids)) != len(self.device_ids):
             raise ValueError("scenario requires at least three distinct inverters")
-        if len(self.faults) != 1:
-            raise ValueError("M1 scenarios require exactly one injected fault")
-        fault = self.faults[0]
-        start, end = window_bounds(fault.start, fault.end)
-        if fault.device_id not in self.device_ids or start < lower or end > upper:
-            raise ValueError("fault device/window must belong to query scope")
-        if fault.type == "F3" and fault.poa_device_id != self.poa_device_id:
-            raise ValueError("fault POA sensor must match scenario sensor")
+        if self.difficulty not in {"easy", "medium", "hard"}:
+            raise ValueError("unsupported difficulty")
+        if len(self.faults) > 2 or (len(self.faults) == 2 and self.difficulty != "hard"):
+            raise ValueError("two-fault scenes must use hard difficulty; at most two faults")
+        signatures = [json.dumps(f.to_dict(), sort_keys=True) for f in self.faults]
+        if len(signatures) != len(set(signatures)):
+            raise ValueError("duplicate injected faults")
+        for fault in self.faults:
+            start, end = window_bounds(fault.start, fault.end)
+            allowed = {self.poa_device_id} if fault.type == "F5" else set(self.device_ids)
+            if fault.device_id not in allowed or start < lower or end > upper:
+                raise ValueError("fault device/window must belong to query scope")
+            if fault.type == "F3" and fault.poa_device_id != self.poa_device_id:
+                raise ValueError("fault POA sensor must match scenario sensor")
+        for left, right in combinations(self.faults, 2):
+            if left.type == right.type and left.device_id == right.device_id:
+                a, b = window_bounds(left.start, left.end), window_bounds(right.start, right.end)
+                if max(a[0], b[0]) < min(a[1], b[1]):
+                    raise ValueError(
+                        "overlapping same-type faults on one device are not independent"
+                    )
 
     def to_dict(self) -> dict:
-        return {
+        result = {
             "scenario_id": self.scenario_id,
             "system_id": self.system_id,
             "query_window": list(self.query_window),
             "device_ids": list(self.device_ids),
             "poa_device_id": self.poa_device_id,
             "faults": [f.to_dict() for f in self.faults],
-            "difficulty": "easy",
+            "difficulty": self.difficulty,
             "split": self.split,
-            "truth_scope": "injected_faults_only",
+            "truth_scope": "injected_faults_only"
+            if self.faults
+            else "unmodified_baseline_candidate",
         }
+        if not self.faults:
+            result["evaluation_eligible"] = False
+        return result
 
     @classmethod
     def from_dict(cls, data: dict) -> Scenario:
@@ -79,6 +100,7 @@ class Scenario:
             data["poa_device_id"],
             tuple(FaultSpec.from_dict(f) for f in data["faults"]),
             data["split"],
+            data.get("difficulty", "easy"),
         )
 
 
@@ -129,8 +151,36 @@ def materialize_scenario(frame: pd.DataFrame, scenario: Scenario) -> tuple[pd.Da
     )
     if set(report["eligible_devices"]) != set(scenario.device_ids):
         raise ValueError(f"{scenario.scenario_id}: baseline failed screening")
-    injected, audit = inject_fault(window, scenario.system_id, scenario.faults[0])
-    return injected, {"baseline_screen": report, "injection": audit}
+    if not scenario.faults:
+        return window.copy(deep=True), {
+            "baseline_screen": report,
+            "injection": None,
+            "evaluation_eligible": False,
+        }
+
+    def apply(faults):
+        current, audits = window, []
+        # Outages use physical (pre-drift) irradiance. Communication loss is an
+        # observation failure and is applied after all physical/sensor changes.
+        ordered = sorted(faults, key=lambda fault: {"F5": 1, "F6": 2}.get(fault.type, 0))
+        for fault in ordered:
+            current, audit = inject_fault(current, scenario.system_id, fault)
+            audits.append(audit)
+        return current, audits
+
+    injected, audits = apply(scenario.faults)
+    if len(scenario.faults) == 1:
+        return injected, {"baseline_screen": report, "injection": audits[0]}
+    for index, fault in enumerate(scenario.faults):
+        without, _ = apply(scenario.faults[:index] + scenario.faults[index + 1 :])
+        effect = injected.value.ne(without.value) & ~(injected.value.isna() & without.value.isna())
+        if not effect.any():
+            raise ValueError(f"unobservable compound fault: {fault.type}")
+    return injected, {
+        "baseline_screen": report,
+        "injections": audits,
+        "composition_order": [a["fault"]["type"] for a in audits],
+    }
 
 
 def generate_smoke_scenarios(

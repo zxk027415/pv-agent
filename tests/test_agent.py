@@ -138,6 +138,16 @@ def test_output_guard_rejects_hallucinated_numbers_paths_times_and_scope(observa
         with pytest.raises(ValueError):
             resolve({"values": [0]}, path)
     assert resolve({"a/b": {"~": [3]}}, "/a~1b/~0/0") == 3
+    sensor_finding = result.report.model_copy(deep=True)
+    sensor_finding.findings[0].fault_type = "F5"
+    sensor_finding.findings[0].device_id = "poa"
+    assert "finding_device_outside_scope" not in check_report(
+        sensor_finding, result.evidence, request(), scope
+    )
+    sensor_finding.findings[0].device_id = "inv01"
+    assert "finding_device_outside_scope" in check_report(
+        sensor_finding, result.evidence, request(), scope
+    )
 
 
 class RepairReasoner(RuleReasoner):

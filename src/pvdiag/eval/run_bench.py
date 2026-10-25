@@ -21,6 +21,12 @@ async def run_benchmark(manifest, scenario_root, metadata, output, reasoner_fact
         )
     if len({s["scenario_id"] for s in scenarios}) != len(scenarios):
         raise ValueError("duplicate scenario IDs")
+    if any(
+        s.get("evaluation_eligible") is False
+        or s.get("truth_scope") == "unmodified_baseline_candidate"
+        for s in scenarios
+    ):
+        raise ValueError("unreviewed baseline candidates are not normal ground truth")
     output.mkdir(parents=True, exist_ok=True)
     cases, metadata_models = [], []
     for scenario in scenarios:

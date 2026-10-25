@@ -176,3 +176,18 @@ def test_runner_refuses_heldout_before_opening_any_observations(tmp_path):
                 lambda: None,
             )
         )
+
+
+def test_irradiance_fault_localization_uses_observed_poa_sensor_not_inverter_scope():
+    actual = truth([{"type": "F5", "device_id": "poa", "start": "2019-01-03", "end": "2019-01-04"}])
+    result = run([finding("F5", "poa")])
+    result.evidence["catalog"] = {
+        "tool": "list_devices",
+        "result": {"devices": [{"device_id": "poa", "metrics": ["poa_wm2"]}]},
+    }
+    scored = score_case(actual, result)
+    assert scored["device_correct"] and scored["joint_root_device_correct"]
+    assert aggregate([scored])["scorer_version"] == "v1.1"
+    actual["faults"][0]["device_id"] = "other_sensor"
+    with pytest.raises(ValueError, match="outside request"):
+        score_case(actual, result)
