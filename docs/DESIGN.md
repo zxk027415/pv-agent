@@ -1,6 +1,6 @@
 # PV Diagnosis Agent · 设计文档
 
-> 版本：v0.1（2026-10-24）· 进度更新：2026-10-25，M1 数据准备、F3/F4 注入与 10 场景生成已实跑，诊断主流程尚未实现
+> 版本：v0.1（2026-10-24）· 进度更新：2026-10-25，M1 数据、F3/F4 场景及只读 MCP 工具层已实跑，诊断主流程尚未实现
 > 一句话：基于 LangGraph + MCP 的光伏电站时序故障诊断 Agent，在注入已知故障的公开数据上做可复现评测，并用固定评分器驱动 harness 自进化。
 
 ---
@@ -430,7 +430,8 @@ pv-diagnosis-agent/
 | 标准化与数据卡 | 新增 `normalize.py`、`datacard.py`；修正 `.gitignore`，只忽略仓库根目录 `/data/`，避免漏掉数据处理源码 |
 | 2107 实际数据验证 | 原始 electrical、irradiance、environment、meter 四份 CSV；筛选 UTC `[2019-01-01, 2021-01-01)`，生成 **5,383,405** 条长表记录、24 台逆变器及电表/气象测点 |
 | 基线筛查与模拟 | 已实现缺测/日间零值/同站离群筛查、F3/F4 注入、场景真值及数据划分隔离校验；已生成 F3/F4 各 5 个开发冒烟场景，逐个验证落盘结果 |
-| M1 剩余工作 | pv-data / pv-analytics、LangGraph 主流程、固定评分器和 10 场景端到端诊断评测；现有 10 场景只完成了生成与注入验证 |
+| 只读 MCP 工具 | pv-data 4 个工具、pv-analytics 5 个工具均已接入 FastMCP / Pydantic；stdio、Streamable HTTP 实测通过；真实场景完成 90 次工具协议调用。2107 缺少可核实的单机物理参数，expected_power 返回 unavailable |
+| M1 剩余工作 | LangGraph 主流程、固定评分器和 10 场景端到端诊断评测；现有调用验证不代表 Agent 已经完成诊断 |
 | M2–M4 | 尚未实现；没有可报告的诊断准确率或消融结果 |
 
 ### 数据核验结论与处理边界
@@ -478,4 +479,31 @@ pv-diagnosis-agent/
   --poa-device sensor_149574
 ```
 
-单独筛查可用 `python -m pvdiag.sim.baseline 2107 --start ... --end ... --devices ... --poa-device sensor_149574`，报告写入本地 `data/clean/2107_baseline_screen.json`。下一步实现 pv-data 和 pv-analytics 的只读数据访问与核心分析工具，再接 LangGraph 和固定评分器。
+单独筛查可用 `python -m pvdiag.sim.baseline 2107 --start ... --end ... --devices ... --poa-device sensor_149574`，报告写入本地 `data/clean/2107_baseline_screen.json`。
+
+### 只读 MCP 工具层
+
+- 新增 `src/pvdiag/mcp_servers/`：`models.py` 定义 Pydantic 入参/出参，`store.py` 加载只读观测快照，`data_tools.py` / `analytics_tools.py` 实现计算，`pv_data.py` / `pv_analytics.py` 提供独立服务入口，`cli.py` 统一启动参数。
+- 安装并验证 FastMCP **4.1.3**、Pydantic **2.14.1**、pvlib **0.16.1**。已在现有 uv 配置中增加相应依赖并更新锁文件；`uv lock --check` 通过。`pyproject.toml` / `uv.lock` 开始本轮时尚未跟踪，本轮继续留在工作区，避免把原有配置内容混入代码提交。
+- 仅加载显式指定的观测 Parquet、站点元数据与可选物理参数 JSON；不读取 `truth.json`、`audit.json` 或场景清单。模型只能看到快照中存在的设备；输出不包含源路径或可能含故障标签的场景 ID。
+- 每份工具结果包含稳定 `evidence_id`、工具版本、请求参数和观测/元数据/模型参数共同构成的 `source_sha256`。进程启动后使用内存快照，更新文件需重启服务。9 个工具均声明 read-only / non-destructive / idempotent，不加载 pv-ops。
+- 时间窗使用 UTC 半开区间 `[start, end)`，最长 90 天，边界对齐 15 分钟。`get_timeseries` 返回重采样统计和全响应最多 240 个采样点，分桶从请求起点开始；缺失 metric 返回零覆盖率和 null 数值，不伪造零功率。质量报告的三类片段共享 64 段预算，按设备及类别分配，截断显式标记。
+- 同站对比使用**独立于目标设备的至少两台设备**，先算目标/同站中位数，再除以明确参考时段的比值中位数；至少 4 个参考日间点才返回归一化比值。不能用整段故障后的数据重新定标。实际第 2 组场景的前 48 小时缺少足够高辐照点，工具因此返回 null；Agent 规划时必须检查参考时段有效性。
+- `detect_anomalies` 当前实现滚动 z-score（前 12 个有效日间点，至少 4 点，标准差下限 0.01，阈值 4），另报告缺测段和高辐照零值段。没有实现 Chronos 或独立变点检测；持续损失的完整区间应结合 `peer_compare`，不能把 z-score 不再触发当作恢复。
+- `profile_pattern` 提供有效日间零值比例、相对功率中位数/IQR、日趋势及当地小时画像；形态是描述性规则，不是根因结论。`compare_periods` 对不重叠窗口统计已观测 15 分钟均值积分、覆盖率和相对性能，缺测不补零，发电量差异仍受天气与时长影响。
+- `expected_power` 实现 pvlib PVWatts DC/AC + Faiman 温度模型。仅接受显式提供且注明来源的 `rated_dc_kw`、`rated_ac_kw`、`gamma_pdc`；默认风速 1 m/s、Faiman 默认系数、逆变效率 0.96 均列为假设。返回逐设备有限长度 PR 序列、偏差与可比高辐照点积分；缺物理参数或缺可比点时返回 unavailable。当前 2107 全部未配置这组参数，不报告虚构的理论 PR。
+- 已验证 10 场景 × 9 工具的 **90 次 MCP 协议调用**；在明确的故障前参考时段下，5 个真实 F4 场景的相对比值均与注入比例相差小于 0.02。这只是已知时间段上的工具数值核对，不是端到端诊断或准确率评测。
+- 当前 **62 个测试通过**，涵盖只读范围、非法请求、缺测/零值、参考时段不足、F4 比值、形态、物理参数缺失/AC 削顶、序列限长、证据稳定性，以及真实 stdio/HTTP 子进程调用；Ruff 通过。下一步实现 LangGraph 的规划/取证/报告及固定评分器，然后评测完整诊断流程。
+
+独立启动（客户端通过 MCP 管理 stdio 进程；两台服务须使用同一份观测快照）：
+
+```bash
+.venv/bin/python -m pvdiag.mcp_servers.pv_data \
+  --observations data/scenarios/S2107-F4-0001/timeseries.parquet \
+  --metadata data/raw/2107/metadata/2107_system_metadata.json
+.venv/bin/python -m pvdiag.mcp_servers.pv_analytics \
+  --observations data/scenarios/S2107-F4-0001/timeseries.parquet \
+  --metadata data/raw/2107/metadata/2107_system_metadata.json
+```
+
+加 `--transport http` 可在 `127.0.0.1` 启动 Streamable HTTP，默认端口分别为 8001 / 8002，端点 `/mcp`。调用参数使用 `{"request": {...}}`。物理参数可通过 `--parameters <path>` 传入，结构为 `{"inv03": {"rated_dc_kw": ..., "rated_ac_kw": ..., "gamma_pdc": ..., "source": "可核验出处"}}`；不能将示例省略号或猜测值当成实际配置。
