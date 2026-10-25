@@ -1,6 +1,6 @@
 # PV Diagnosis Agent · 设计文档
 
-> 版本：v0.1（2026-10-24）· 状态：设计稿，未开工
+> 版本：v0.1（2026-10-24）· 进度更新：2026-10-25，M1 数据标准化与数据卡已实跑，诊断主流程尚未实现
 > 一句话：基于 LangGraph + MCP 的光伏电站时序故障诊断 Agent，在注入已知故障的公开数据上做可复现评测，并用固定评分器驱动 harness 自进化。
 
 ---
@@ -417,3 +417,41 @@ pv-diagnosis-agent/
 | 混合检索 + 重排、Ragas | §5.3、§9 |
 | LLM-as-Judge、消融评测、Langfuse | §9 |
 | 自进化（Harness2 风格）、OpenViking | §7、§8 |
+
+---
+
+## 17. 开发记录（2026-10-25）
+
+### 当前进度
+
+| 模块 | 可核验状态 |
+|---|---|
+| 工程与下载 | 现有 Python 3.11 / uv 配置、匿名 S3 下载器；下载器原有 4 个测试通过。开始本轮时，这些文件尚未提交，本轮保留其工作区状态 |
+| 标准化与数据卡 | 新增 `normalize.py`、`datacard.py`；修正 `.gitignore`，只忽略仓库根目录 `/data/`，避免漏掉数据处理源码 |
+| 2107 实际数据验证 | 原始 electrical、irradiance、environment、meter 四份 CSV；筛选 UTC `[2019-01-01, 2021-01-01)`，生成 **5,383,405** 条长表记录、24 台逆变器及电表/气象测点 |
+| M1 剩余工作 | F3 / F4 故障注入、场景真值、pv-data / pv-analytics、LangGraph 主流程、固定评分器和 10 场景冒烟评测 |
+| M2–M4 | 尚未实现；没有可报告的诊断准确率或消融结果 |
+
+### 数据核验结论与处理边界
+
+- 旧版 `measured_on` 使用元数据中的 **PST8PDT 当地时间**：原始辐照及电表功率的逐小时均值在约 12–13 点达到峰值，支持当地时间解释；不能把这批时间戳直接标成 UTC。
+- `utc_measured_on` 按 UTC 读取。年度扩展和其他修订版默认不混入本次数据；仅靠文件名不能确认其时间语义，使用前需单独验证。
+- 24 个逆变器 AC 通道及电表输出的元数据单位是 **kW**，不是累计 kWh；POA 是 **W/m²**；环境温度是 **F**，已换算为 °C。没有直接 DC 功率通道，不擅自由电压、电流构造等效值。
+- 保留 NaN、零值与负值；不插补、不削峰。当地时间的夏令时歧义/不存在记录排除并在 normalization JSON 中计数；该计数覆盖所读源文件，而非只统计筛选窗口。重复键只有同值时合并，冲突值直接报错。
+- 覆盖率定义为 **UTC 15 分钟 bin 内至少有一个有限观测值**，不是 NaN 比例。推荐区间要求元数据描述的全部逆变器 AC 通道和至少一个 POA 通道，每个完整月均达到 95% 覆盖率。
+- 本次推荐 UTC `[2019-01-01, 2020-01-01)` 共 **12 个月**，其中最差月份、通道覆盖率为 **98.0847%**；2019–2020 全窗口逆变器通道覆盖率约 **99.9772%**，POA 约 **98.9042%**。
+- **覆盖率不等于无故障**。故障注入前仍需筛查真实功率异常和可比设备；不能把自然停机样本当成正常真值。逆变器额定容量未在源元数据中显式提供，数据卡保留 null，不从型号或全站容量猜测。
+
+### 本地复现
+
+使用现有 `.venv`（pandas、pyarrow、httpx、pytest、ruff 已安装）；也可在已有 uv 工程环境中用 `uv run python` 替换下方 Python 命令。原始数据和生成产物均不入库。
+
+```bash
+.venv/bin/python -m pvdiag.data.download 2107 --include 2107_electrical_data.csv --include 2107_irradiance_data.csv --include 2107_environment_data.csv --include 2107_meter_15m_data.csv
+.venv/bin/python -m pvdiag.data.normalize 2107 --start 2019-01-01 --end 2021-01-01
+.venv/bin/python -m pvdiag.data.datacard 2107
+.venv/bin/pytest -q
+.venv/bin/ruff check src tests
+```
+
+产物为 `data/clean/2107.parquet`、`2107_normalization.json`、`2107_card.json`。默认仅选择 `*data.csv`；显式选择其他来源时可重复传入 `--pattern`，时区经核实后可用 `--source-timezone` 覆盖。
