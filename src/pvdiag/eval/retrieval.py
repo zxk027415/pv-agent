@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+from time import perf_counter
 
 from pydantic import Field, model_validator
 
@@ -47,7 +48,9 @@ def evaluate(dataset, store, *, top_k=3):
     cases = []
     for question in dataset.questions:
         # The answer and relevance labels never enter the retriever or model.
+        started = perf_counter()
         evidence = store.search(SearchRequest(query=question.question, top_k=top_k))
+        elapsed = perf_counter() - started
         retrieved = [h.document.document_id for h in evidence.result.hits]
         relevant = set(question.relevant_document_ids)
         positions = [i for i, doc in enumerate(retrieved, 1) if doc in relevant]
@@ -60,6 +63,7 @@ def evaluate(dataset, store, *, top_k=3):
                 "document_recall_at_k": len(positions) / len(relevant),
                 "reciprocal_rank": 1 / positions[0] if positions else 0.0,
                 "evidence_id": evidence.evidence_id,
+                "retrieval_seconds": elapsed,
             }
         )
     return {
@@ -71,6 +75,7 @@ def evaluate(dataset, store, *, top_k=3):
         "retrieval_config": store.retriever.config,
         "top_k": top_k,
         "questions": len(cases),
+        "total_retrieval_seconds": sum(c["retrieval_seconds"] for c in cases),
         "metrics": {
             key: sum(c[key] for c in cases) / len(cases)
             for key in ("document_precision_at_k", "document_recall_at_k", "reciprocal_rank")
@@ -93,7 +98,11 @@ def main(argv=None):
     parser.add_argument("--output", type=Path, default=Path("data/eval/kb_bm25_dev.json"))
     args = parser.parse_args(argv)
     dataset = QASet.model_validate_json(args.questions.read_bytes())
-    result = evaluate(dataset, knowledge_from_args(args), top_k=args.top_k)
+    started = perf_counter()
+    store = knowledge_from_args(args)
+    load_seconds = perf_counter() - started
+    result = evaluate(dataset, store, top_k=args.top_k)
+    result["snapshot_load_seconds"] = load_seconds
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, indent=2, ensure_ascii=False, allow_nan=False) + "\n")
     print(json.dumps({"questions": result["questions"], "metrics": result["metrics"]}, indent=2))

@@ -29,8 +29,23 @@
 
 `KnowledgeStore` 只读 manifest 指定的 `kb/excerpts/`、`kb/licenses/` 与同级 `playbooks/` 文件，校验内容哈希、重复 ID、体积和路径边界。整个 manifest 和检索配置共同构成知识快照指纹，与观测快照指纹分开记录。
 
-当前可实测的是 BM25 启动模式。`hybrid_bge` 实现 BM25 + 本地向量余弦检索、RRF 融合与本地 BGE CrossEncoder 重排接口，但需要另行准备 sentence-transformers 运行时及经过许可核对的本地模型目录；缺失时显式失败，不下载、不转用在线服务、不静默回退。尚无真实 BGE、Ragas 或正式 A3 成绩。
+BM25 与 `hybrid_bge` 已在本机实跑。混合模式使用 BM25 + 本地向量余弦检索、RRF 融合与本地 BGE CrossEncoder 重排；推理时缺失依赖或经过校验的本地模型即显式失败，不下载、不转用在线服务、不静默回退。下载仅通过显式执行 `pvdiag.knowledge.model_assets` 进行。Ragas 与正式 A3 仍未实评。
 
-本地加载参数已对照 sentence-transformers v5.1.2 的官方 [SentenceTransformer](https://github.com/huggingface/sentence-transformers/blob/v5.1.2/sentence_transformers/SentenceTransformer.py) 与 [CrossEncoder](https://github.com/huggingface/sentence-transformers/blob/v5.1.2/sentence_transformers/cross_encoder/CrossEncoder.py) 构造函数，确认 `local_files_only` 和 `trust_remote_code` 参数存在；这是只读源码核对，不是模型运行验证。这些源码没有作为知识语料再分发。
+本地加载参数先对照 sentence-transformers v5.1.2 的官方 [SentenceTransformer](https://github.com/huggingface/sentence-transformers/blob/v5.1.2/sentence_transformers/SentenceTransformer.py) 与 [CrossEncoder](https://github.com/huggingface/sentence-transformers/blob/v5.1.2/sentence_transformers/cross_encoder/CrossEncoder.py) 构造函数核对，随后在实际安装的 v5.1.2 上完成离线推理及 stdio MCP 验证。官方源码没有作为知识语料再分发。
 
 开发检索集位于 `../bench/kb_qa_dev.json`，含项目编写的 30 个问题、参考回答和相关文档 ID。它仅供离线检索对比，未经过独立专家复核，也不包含电站场景真值；运行时知识服务不会加载它。纯代码文档指标不能替代 Ragas 的上下文/回答评测。
+
+## 本地模型权重许可与版本
+
+2026-10-25 已读取以下固定版本的模型卡 YAML 及 License 段落。两份卡片均标记 `license: mit`，并明确说明发布模型可免费商用，链接到 FlagEmbedding 的 MIT 许可。链接的完整许可已在固定 GitHub commit 下读取并保留于 [licenses/FlagEmbedding-LICENSE.txt](licenses/FlagEmbedding-LICENSE.txt)，版权为 `Copyright (c) 2022 staoxiao`，SHA-256 为 `587a673933425dbc36ec61268d3b954051b2d3ef3c9b322ede357976055ffdd5`；再分发时保留该许可及版权。
+
+| 用途 | 模型卡及已固定 revision | 权重 SHA-256 |
+|---|---|---|
+| 512 维中文嵌入 | [BAAI/bge-small-zh-v1.5](https://huggingface.co/BAAI/bge-small-zh-v1.5/tree/7999e1d3359715c523056ef9478215996d62a620) | `354763b9b1357bc9c44f62c6be2276321081ed2567773608c0d0785b61d5a026` |
+| 中英双语重排 | [BAAI/bge-reranker-base](https://huggingface.co/BAAI/bge-reranker-base/tree/2cfc18c9415c912f9d8155881c133215df768a70) | `ced967c45fd1902eb92716c9ceeca7c95a936770ea9db611f5a841b926e33fbd` |
+
+[model_assets.json](model_assets.json) 固定模型、revision、完整许可出处及各文件大小/哈希；LFS 权重和 tokenizer 大文件的 SHA-256 来自相应 revision 的 Hugging Face 文件元数据，并在下载后独立重算；其余小文件在固定 revision 下读取后计算哈希。仅选择 safetensors 权重及本地配置/tokenizer，不下载 pickle 权重、ONNX 副本或远程代码。
+
+运行文件放在忽略的 `../data/models/`，本次合计下载 1,230,814,896 字节，不将权重提交 Git。每个目录附有模型卡、完整 MIT 许可及固定清单收据。下载器不会覆盖已有不匹配文件；中断后再次运行会核验并跳过已完成文件，重新下载未完成文件。推理加载再次核对许可、收据、配置、tokenizer 和权重哈希，并使用 `local_files_only=True`、`trust_remote_code=False`、`use_safetensors=True`。
+
+可选依赖单独记录在 `../requirements/knowledge.in` 与 macOS arm64 / Python 3.11 的 `knowledge-macos-arm64.txt`。当前实际环境为 sentence-transformers 5.1.2、Transformers 4.57.6、PyTorch 2.11.0；未改动原有未跟踪的工程配置。该锁定环境尚未验证 Linux 部署，原核心 uv 配置也不管理这些可选包。

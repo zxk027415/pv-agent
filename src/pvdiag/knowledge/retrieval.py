@@ -11,6 +11,8 @@ from pathlib import Path
 
 import numpy as np
 
+from pvdiag.knowledge.model_assets import verify_snapshot
+
 
 def tokens(text):
     text = text.casefold()
@@ -123,6 +125,10 @@ class LocalBGE:
             "reranker_sha256": _model_fingerprint(reranker_path),
             "query_prefix": "为这个句子生成表示以用于检索相关文章：",
             "device": device,
+            "reviewed_assets": {
+                role: verify_snapshot(path, role).model_dump(mode="json")
+                for role, path in (("embedding", embedding_path), ("reranker", reranker_path))
+            },
         }
         try:
             from sentence_transformers import CrossEncoder, SentenceTransformer
@@ -130,18 +136,58 @@ class LocalBGE:
             raise RuntimeError(
                 "hybrid_bge requires the optional sentence-transformers runtime"
             ) from None
-        self.identity["sentence_transformers_version"] = version("sentence-transformers")
-        self.embedding = SentenceTransformer(
-            str(embedding_path), device=device, local_files_only=True, trust_remote_code=False
+        import torch
+
+        self.identity.update(
+            {
+                "sentence_transformers_version": version("sentence-transformers"),
+                "transformers_version": version("transformers"),
+                "torch_version": str(torch.__version__),
+                "numpy_version": np.__version__,
+                "embedding_max_seq_length": 512,
+                "reranker_max_length": 512,
+                "embedding_batch_size": 8,
+                "reranker_batch_size": 4,
+                "reranker_activation": "identity_logits_not_probability",
+                "dtype": "float32",
+                "cpu_threads": torch.get_num_threads(),
+            }
         )
+        model_kwargs = {"dtype": torch.float32, "use_safetensors": True}
+        self.embedding = SentenceTransformer(
+            str(embedding_path),
+            device=device,
+            local_files_only=True,
+            trust_remote_code=False,
+            model_kwargs=model_kwargs,
+        )
+        self.embedding.max_seq_length = 512
+        self.identity["embedding_dimensions"] = self.embedding.get_sentence_embedding_dimension()
         self.reranker = CrossEncoder(
-            str(reranker_path), device=device, local_files_only=True, trust_remote_code=False
+            str(reranker_path),
+            device=device,
+            local_files_only=True,
+            trust_remote_code=False,
+            max_length=512,
+            activation_fn=torch.nn.Identity(),
+            model_kwargs=model_kwargs,
         )
 
     def encode(self, texts, *, query):
         if query:
             texts = [self.identity["query_prefix"] + text for text in texts]
-        return self.embedding.encode(texts, normalize_embeddings=True, show_progress_bar=False)
+        return self.embedding.encode(
+            texts,
+            normalize_embeddings=True,
+            show_progress_bar=False,
+            batch_size=8,
+            convert_to_numpy=True,
+        )
 
     def rerank(self, query, texts):
-        return self.reranker.predict([(query, text) for text in texts], show_progress_bar=False)
+        return self.reranker.predict(
+            [(query, text) for text in texts],
+            show_progress_bar=False,
+            batch_size=4,
+            convert_to_numpy=True,
+        )

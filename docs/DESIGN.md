@@ -1,6 +1,6 @@
 # PV Diagnosis Agent · 设计文档
 
-> 版本：v0.1（2026-10-24）· 进度更新：2026-10-25，规则诊断链路、六类领域核验及知识库 BM25 开发链路已验证；混合检索尚缺真实模型实测，DeepSeek 单例已授权但缺本机凭据
+> 版本：v0.1（2026-10-24）· 进度更新：2026-10-25，规则诊断、领域核验及本地 BGE 混合检索已实跑；Ragas/完整 A3 尚未评测，DeepSeek 单例已授权但缺本机凭据
 > 一句话：基于 LangGraph + MCP 的光伏电站时序故障诊断 Agent，在注入已知故障的公开数据上做可复现评测，并用固定评分器驱动 harness 自进化。
 
 ---
@@ -432,9 +432,9 @@ pv-diagnosis-agent/
 | 基线筛查与模拟 | 已实现缺测/日间零值/同站离群筛查、六类注入及双故障、真值与数据划分隔离校验；已生成 10 个 M1 冒烟场景及 80 个 M2 短窗开发候选，未注入候选不能作为正常真值 |
 | 只读 MCP 工具 | pv-data 4 个工具、pv-analytics 5 个工具均已接入 FastMCP / Pydantic；stdio、Streamable HTTP 实测通过；真实场景完成 90 次工具协议调用。2107 缺少可核实的单机物理参数，expected_power 返回 unavailable |
 | 诊断图与评分器 | 已接 LangGraph、原生 MCP 客户端、有界并行取证、结构与可选领域核验、离线自评接口及评分器 v1.1；B0 十场景结构/领域模式回归均为根因/定位 10/10、时间窗 9/10 |
-| 知识库 | 已核对许可并收录 5 份 pvlib 文档、6 份项目 Playbook；两项只读 MCP 工具、可选图接入及 30 题 BM25 开发检索评测已实跑。向量/BGE 仅有本地后端与替身测试，真实模型及 Ragas 尚未执行 |
+| 知识库 | 已核对许可并收录 5 份 pvlib 文档、6 份项目 Playbook；两项 MCP 工具、可选图接入和 30 题 BM25/BGE 对比已实跑。混合检索文档 Recall@3 为 1.0、MRR 为 0.9833；自编标签、不是 Ragas 或 A3 成绩 |
 | M1 剩余工作 | DeepSeek 真实单场景验证及 10 场景 Agent 评测；当前 B0 数字不代表 LLM 成绩。后续还需可核实的物理参数与更完整的基线审核 |
-| M2 | 六类故障原语、短窗候选、领域核验及知识库首批语料/接口已实现；正式基准集、真实混合检索、Ragas、审批、持久化及 LLM 消融尚未完成 |
+| M2 | 六类故障原语、短窗候选、领域核验、知识库和本地混合检索已实现；正式基准集、Ragas、审批、持久化及 LLM 消融尚未完成 |
 | M3–M4 | 尚未实现；没有进化、泛化或完整消融结果 |
 
 ### 数据核验结论与处理边界
@@ -516,7 +516,7 @@ pv-diagnosis-agent/
 - 新增 `src/pvdiag/agent/`，状态定义、范围检查、MCP 网关、LangGraph、B0 reasoner、LLM reasoner 和单次诊断 CLI 分开；`harness/system_prompt.md` 作为版本化提示词。图为 `guard_in → plan → investigate → hypothesize → verify → report → guard_out`，结构校验失败或计划还需取证时回到 plan，最多三轮、默认最多三十次工具调用。轮次或预算耗尽仍不足时降级人工复核。
 - LangGraph **1.2.17**、LangChain **1.4.7**、langchain-openai **1.7.2** 已安装。**验证出的兼容性差异**：PyPI 最新 langchain-mcp-adapters **0.3.2** 要求 `mcp>=1.24,<2`，FastMCP **4.1.3** 要求 `mcp>=2.2,<3`，uv 无法同时解析。当前使用 FastMCP 原生 Client 连接两个服务，保持 MCP 协议和工具 schema；未强装冲突依赖。
 - 调用前校验节点工具白名单、Pydantic 参数、系统/设备/传感器和查询/参考时间范围；响应校验 schema、实际请求、稳定 evidence_id 哈希及两台服务的观测快照指纹。模型看不到原始 Parquet、场景 ID、基线筛查结果或注入真值。远端错误只保留类型，不把可能含凭据或路径的异常文本传入报告。
-- 报告采用定性置信度。每条结论要求至少两个不同的非元数据观测工具引用；数值通过 JSON Pointer 精确溯源，时间边界也须对应已有观测证据时间戳。定性摘要/理由禁止自由嵌入数字；结构核验失败会重试或清除不可信结论，返回 needs_review。默认仍为结构核验；可选领域必要证据核验和模型自评见后文。**这些检查不等于独立语义忠实度评测，完整混淆因素排除、真实混合检索评测和写操作审批仍未完成**。
+- 报告采用定性置信度。每条结论要求至少两个不同的非元数据观测工具引用；数值通过 JSON Pointer 精确溯源，时间边界也须对应已有观测证据时间戳。定性摘要/理由禁止自由嵌入数字；结构核验失败会重试或清除不可信结论，返回 needs_review。默认仍为结构核验；可选领域必要证据核验和模型自评见后文。**这些检查不等于独立语义忠实度评测，完整混淆因素排除、Ragas 和写操作审批仍未完成**。
 - 当前使用进程内 InMemorySaver，已验证检查点保存和读取；没有声称实现跨进程持久化或 PostgresSaver。记忆、pv-ops、审批、中长期存储和服务化 API 仍属于后续工作。
 - B0 用纯代码从辐照摘要选择有足够日间点的参考期，再结合同站低值段/高辐照零值段、形态及分期对比生成可溯源假设，仅覆盖当前 F3/F4；其他情况保守输出 inconclusive，不能认定正常。B0 与 LLM reasoner 共享图及工具协议，但运行元数据明确区分模式。
 - DeepSeek 接口通过 `init_chat_model` 和 `with_structured_output(method="function_calling")` 接入，记录实际返回模型名、输入/输出 token 和缺失用量标记。每次输出最多 4096 token、禁用隐式自动重试、请求有超时与载荷字符上限。已完成真实 SDK 的 schema 构造及注入式离线模型测试，**没有发起收费调用**。调用须显式 `--allow-model-calls`；DeepSeek 默认只读取 `DEEPSEEK_API_KEY`，OpenAI 只读取 `OPENAI_API_KEY`，其他端点默认读取 `PVDIAG_LLM_API_KEY`，可用 `--credential-env` 显式指定字段；从环境或忽略的本地 `.env` 加载，不输出、不入库，不自动跨提供方回退。仅凭模型别名仍无法证明正式模型版本固定。
@@ -591,7 +591,7 @@ pv-diagnosis-agent/
 - `KnowledgeStore` 只读 manifest 指定的固定目录，验证内容/许可哈希、大小、路径及重复项；不读取 `data/`、`bench/` 或诊断真值。启动后保持内容快照。知识指纹由语料清单、检索配置和检索实现源码哈希共同决定，与观测指纹分开。
 - 新增 `pv-knowledge` 的 `search_fault_kb`、`get_playbook` 两个 Pydantic/FastMCP 只读工具，默认 stdio，可通过本机 8003 端口提供 HTTP。Agent 默认仍只挂载两台观测服务，显式 `--knowledge-root kb` 才启用知识服务；网关在连接时固定知识指纹并逐响应验证。运行结果及评测摘要记录 `knowledge_source_sha256`。
 - 知识内容仅作为机理参考：两个知识工具不能满足报告的两个观测工具要求，检索分数不能作为设备测量值，文档日期不能作为故障时间。已更新 system prompt，并以结构守卫和测试落实这些边界；没有把检索到 Playbook 当作写操作权限。
-- BM25 支持拉丁词和中文单字/双字，查询求和顺序固定，跨进程证据 ID 一致。`hybrid_bge` 路径实现向量余弦检索、BM25/RRF 候选融合与本地 CrossEncoder 重排；模型目录内容哈希和运行时版本会进入配置，仅允许本地加载、禁用远程代码。构造参数已只读核对 sentence-transformers **v5.1.2** 的官方源码，但**尚未安装运行时或下载模型、核对模型权重许可、运行真实 BGE**，不能称混合检索已实测。缺失依赖或模型时显式失败，不静默回退 BM25 或调用在线嵌入服务。
+- BM25 支持拉丁词和中文单字/双字，查询求和顺序固定，跨进程证据 ID 一致。`hybrid_bge` 路径实现向量余弦检索、BM25/RRF 候选融合与本地 CrossEncoder 重排；模型目录内容哈希和运行时版本会进入配置，仅允许本地加载、禁用远程代码。该批实现时仅完成 sentence-transformers **v5.1.2** 的官方接口源码核对与替身测试；本轮真实模型准备及实测见下节。缺失依赖或模型时显式失败，不静默回退 BM25 或调用在线嵌入服务。
 - 新增 `bench/kb_qa_dev.json` 的 **30 题**开发问答和 `eval/retrieval.py`。问题覆盖六类故障边界及物理模型假设，逐题记录参考回答和相关文档 ID；参考回答/标签不传入检索器。当前标签由项目编写，尚无独立专家复核。BM25、k=3 实跑的宏平均文档 Precision@3 为 **0.3556**、Recall@3 为 **0.95**、MRR 为 **0.9111**，原始结果在 `data/eval/kb_bm25_dev.json`。两项未完整召回涉及中文 Faiman 输入/系数问题，英文原文未进入前三；保留这些失败，不据此修改标签凑数。以上是文档 ID 重叠指标，**不是 Ragas context precision/recall、回答忠实度或故障准确率**。
 - 本批已验证知识工具的真实 stdio 与本机 HTTP 调用，HTTP 收据在 `data/runs/kb_http_smoke.json`；受控数据跑通“图规划 → 知识/观测并行取证 → 领域核验 → 报告”。真实 M1 在显式挂载知识服务的领域模式下回归，仍为根因/定位 10/10、时间窗 9/10、每场景 8 次工具调用，结果在 `data/eval/m1_knowledge_mount_regression/`。B0 不使用知识，因此该回归只证明挂载兼容，不能证明知识对诊断有提升，也不能算 A3 成绩；评分器 v1.1 未改。
 - 当前全套 **149 个测试通过**，Ruff、本轮 14 个 Python 文件的格式检查、`uv lock --check` 和差异空白检查通过。新增 26 个测试覆盖逐字节重建、双语检索/空结果、来源与许可、不可变快照、路径/符号链接越界、篡改与重复项、MCP/图接入、知识指纹隔离、知识不得替代测量或时间边界、融合/重排错误关闭，以及检索指标手算与标签隔离。全仓格式检查的原有下载器问题仍未改动；真实 BGE 尚未验证。
@@ -606,4 +606,35 @@ pv-diagnosis-agent/
   --knowledge-root kb --output data/eval/m1_knowledge_mount_regression
 ```
 
-后续仍需准备并核对本地向量/BGE 模型、真实混合检索与 Ragas，完善独立语料/标签审核，并结合真实 LLM 评测完整 A3；审批、PostgresSaver、正式正常/留出基准和其余消融仍待开发。DeepSeek 单例授权不扩展为检索 Judge 或批量诊断调用。
+后续仍需 Ragas、独立语料/标签审核，并结合真实 LLM 评测完整 A3；审批、PostgresSaver、正式正常/留出基准和其余消融仍待开发。DeepSeek 单例授权不扩展为检索 Judge 或批量诊断调用。
+
+### 真实本地 BGE 准备与混合检索对比
+
+- 已核对两款模型固定版本的模型卡及其链接的完整 MIT 许可，详细来源和 SHA-256 记录在 `kb/SOURCES.md`、`kb/model_assets.json`，许可文本保存在 `kb/licenses/FlagEmbedding-LICENSE.txt`。嵌入为 `BAAI/bge-small-zh-v1.5@7999e1d3359715c523056ef9478215996d62a620`，重排为 `BAAI/bge-reranker-base@2cfc18c9415c912f9d8155881c133215df768a70`；没有使用可移动别名代替版本。
+- 新增 `knowledge/model_assets.py`：只下载清单指定文件，流式计算大小/哈希，完成校验后才发布文件；失败清理本次临时文件，保留已完成文件以供重试。已有内容不符时拒绝覆盖。每个模型目录保留卡片、完整 MIT 许可和版本清单收据；加载时再次校验。实际下载共 **1,230,814,896 字节**，位于忽略的 `data/models/`，不入 Git，也没有调用收费模型服务。
+- 可选运行环境通过 `requirements/knowledge.in` 和 macOS arm64 / Python 3.11 的 `requirements/knowledge-macos-arm64.txt` 锁定，实际安装 sentence-transformers **5.1.2**、Transformers **4.57.6**、PyTorch **2.11.0**；原有未跟踪 `pyproject.toml` / `uv.lock` 未改动，可选包尚未纳入核心 uv 配置，Linux 环境未实测。
+- 实际使用 CPU、float32、4 个 CPU 线程、512 维嵌入，embedding/reranker 最大长度均为 512 token，批大小分别为 8/4；更长文档受模型截断限制。嵌入查询使用 BGE 中文检索前缀，重排保留原始 logits，不能解释成概率。模型文件指纹、固定清单、依赖版本和上述配置记录到检索元数据。
+- 在 `HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1` 下完成真实混合检索及 stdio MCP 两项工具调用，收据在 `data/runs/kb_bge_stdio_smoke.json`，返回知识指纹与评测一致。未读取场景真值、未生成回答或运行 Judge，也没有消耗 DeepSeek 单场景授权。
+- 对同一份 30 题与标签运行两种模式，QA SHA-256 相同，未针对结果修改问题、参考回答或相关文档标签：
+
+| 文档检索指标（k=3） | BM25 | BM25 + 向量/RRF + BGE 重排 |
+|---|---:|---:|
+| 宏平均 Precision@3 | 0.3556 | 0.3778 |
+| 宏平均 Recall@3 | 0.9500 | 1.0000 |
+| MRR | 0.9111 | 0.9833 |
+| 30 次查询总耗时 | 0.017 秒 | 25.516 秒 |
+
+- 原始结果分别在 `data/eval/kb_bm25_bge_comparison.json`、`data/eval/kb_bge_dev.json`；新增逐题查询耗时和快照加载耗时。混合模式此次快照加载约 **3.655 秒**，不声称是严格冷启动测量。两道中文 Faiman 问题均完整召回，但 KB028 的首个标注文档仍在第二名。语料只有 **11 份**，全部进入最多 20 个重排候选，因此当前对比主要反映重排收益，不能单独证明向量召回或融合阶段的增益。
+- 当前全套 **162 个测试通过**，新增 13 个覆盖下载幂等、损坏/超量/网络失败、错误收据/许可/权重、路径/符号链接越界、非许可仓库和 pickle/代码文件拒绝。真实模型运行验证独立于替身测试完成。仍无独立专家标签、Ragas、生成回答忠实度或完整 A3 诊断收益结论。
+
+复现本地模型准备与离线检索：
+
+```bash
+uv pip install --python .venv/bin/python -r requirements/knowledge-macos-arm64.txt
+.venv/bin/python -m pvdiag.knowledge.model_assets
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 .venv/bin/python -m pvdiag.eval.retrieval \
+  --retrieval-mode hybrid_bge \
+  --embedding-model-path data/models/bge-small-zh-v1.5 \
+  --reranker-model-path data/models/bge-reranker-base \
+  --output data/eval/kb_bge_dev.json
+```
