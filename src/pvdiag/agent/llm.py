@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 
 from langchain.chat_models import init_chat_model
@@ -20,6 +21,7 @@ class LLMReasoner:
         temperature=0.0,
         api_key=None,
         max_model_calls=6,
+        call_tracker=None,
     ):
         if not 1 <= max_model_calls <= 30:
             raise ValueError("invalid model call budget")
@@ -28,6 +30,7 @@ class LLMReasoner:
                 "custom endpoints require an explicit API key; no implicit credential fallback"
             )
         self.max_model_calls = max_model_calls
+        self.call_tracker = call_tracker
         kwargs = {
             "model_provider": provider,
             "temperature": temperature,
@@ -47,6 +50,13 @@ class LLMReasoner:
             "temperature": temperature,
             "reported_models": [],
             "max_model_calls": max_model_calls,
+            "endpoint_sha256": hashlib.sha256(
+                str(
+                    base_url
+                    or getattr(self.model, "openai_api_base", None)
+                    or f"{provider}_default"
+                ).encode()
+            ).hexdigest(),
         }
         self.usage = {
             "input_tokens": 0,
@@ -55,12 +65,44 @@ class LLMReasoner:
             "usage_missing_calls": 0,
         }
 
+    async def sync_accounting(self):
+        if self.call_tracker is not None:
+            try:
+                self.usage, models = await self.call_tracker.snapshot()
+                self.metadata["reported_models"] = models
+            except Exception:  # noqa: BLE001 -- storage errors may contain credential-bearing DSNs
+                raise RuntimeError("model_accounting_unavailable") from None
+
+    async def _settle(self, reservation, usage, reported):
+        if self.call_tracker is not None:
+            try:
+                await self.call_tracker.finish(reservation, usage, reported)
+                await self.sync_accounting()
+            except Exception:  # noqa: BLE001 -- redact all storage exception details
+                raise RuntimeError("model_accounting_unavailable") from None
+        else:
+            if usage:
+                for key in ("input_tokens", "output_tokens"):
+                    self.usage[key] += usage.get(key, 0)
+            else:
+                self.usage["usage_missing_calls"] += 1
+            if reported and reported not in self.metadata["reported_models"]:
+                self.metadata["reported_models"].append(reported)
+
     async def _call(self, schema, payload, prompt):
         if self.usage["model_calls"] >= self.max_model_calls:
             raise ValueError("model_call_budget_exhausted")
         serialized = json.dumps(payload, ensure_ascii=False, allow_nan=False)
         if len(serialized) > 80_000:
             raise ValueError("model context exceeds configured character budget")
+        reservation = None
+        if self.call_tracker is not None:
+            try:
+                reservation = await self.call_tracker.reserve()
+            except ValueError:
+                raise
+            except Exception:  # noqa: BLE001 -- redact all storage exception details
+                raise RuntimeError("model_accounting_unavailable") from None
         self.usage["model_calls"] += 1
         try:
             response = await asyncio.wait_for(
@@ -70,18 +112,12 @@ class LLMReasoner:
                 timeout=65,
             )
         except Exception:  # noqa: BLE001 -- provider boundary strips credential-bearing error text
-            self.usage["usage_missing_calls"] += 1
+            await self._settle(reservation, None, None)
             raise RuntimeError("model_call_failed") from None
         raw = response["raw"]
         usage = raw.usage_metadata
-        if usage:
-            for key in ("input_tokens", "output_tokens"):
-                self.usage[key] += usage.get(key, 0)
-        else:
-            self.usage["usage_missing_calls"] += 1
         reported = raw.response_metadata.get("model_name") or raw.response_metadata.get("model")
-        if reported and reported not in self.metadata["reported_models"]:
-            self.metadata["reported_models"].append(reported)
+        await self._settle(reservation, usage, reported)
         if response["parsing_error"] or response["parsed"] is None:
             raise ValueError("invalid structured model output")
         return response["parsed"]

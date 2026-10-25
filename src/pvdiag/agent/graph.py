@@ -6,7 +6,7 @@ import asyncio
 import hashlib
 from copy import deepcopy
 from pathlib import Path
-from time import perf_counter
+from time import time
 
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
@@ -71,6 +71,9 @@ def build_graph(
                     "agent/graph.py",
                     "agent/__main__.py",
                     "agent/state.py",
+                    "agent/runtime.py",
+                    "agent/persistence.py",
+                    "agent/sessions.py",
                     "ops/store.py",
                     "ops/gateway.py",
                     "mcp_servers/pv_ops.py",
@@ -79,7 +82,7 @@ def build_graph(
         ).hexdigest()
 
     async def guard_in(state: DiagState):
-        started = perf_counter()
+        started = time()
         request = DiagRequest.model_validate(state["request"])
         if not any(
             word in request.question.lower()
@@ -323,7 +326,9 @@ def build_graph(
         )
         return {"verdict": verdict}
 
-    def guard_out(state):
+    async def guard_out(state):
+        if callable(getattr(reasoner, "sync_accounting", None)):
+            await reasoner.sync_accounting()
         verdict = state["verdict"]
         if check_report(verdict, state["evidence"], state["request"], state["scope"]):
             verdict = degrade(state["evidence"])
@@ -340,7 +345,7 @@ def build_graph(
             model=deepcopy(reasoner.metadata),
             model_usage=deepcopy(reasoner.usage),
             harness_sha256=harness_sha,
-            duration_seconds=perf_counter() - state["started_at"],
+            duration_seconds=max(0.0, time() - state["started_at"]),
             verification_mode=verification_mode,
             verification=state["verification"],
             verification_policy_sha256=policy_sha,

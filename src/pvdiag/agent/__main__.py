@@ -6,7 +6,6 @@ import getpass
 import json
 import os
 import re
-from contextlib import AsyncExitStack
 from pathlib import Path
 from urllib.parse import urlsplit
 from uuid import uuid4
@@ -14,18 +13,12 @@ from uuid import uuid4
 from dotenv import dotenv_values
 from langgraph.types import Command
 
-from pvdiag.agent.gateway import MCPGateway
-from pvdiag.agent.graph import build_graph
 from pvdiag.agent.rules import RuleReasoner
+from pvdiag.agent.runtime import open_runtime
 from pvdiag.agent.state import ApprovalDecision, DiagRequest
-from pvdiag.mcp_servers.pv_analytics import create_server as analytics_server
-from pvdiag.mcp_servers.pv_data import create_server as data_server
 from pvdiag.mcp_servers.pv_knowledge import (
     add_knowledge_arguments,
     knowledge_from_args,
-)
-from pvdiag.mcp_servers.pv_knowledge import (
-    create_server as knowledge_server,
 )
 from pvdiag.mcp_servers.store import ObservationStore
 
@@ -89,31 +82,16 @@ async def run_diagnosis(
 ):
     if (ops_store is None) != (approval_handler is None):
         raise ValueError("operations require an explicit trusted human approval handler")
-    async with AsyncExitStack() as stack:
-        gateway = await stack.enter_async_context(
-            MCPGateway.connect(
-                data_server(store),
-                analytics_server(store),
-                knowledge_server(knowledge_store) if knowledge_store else None,
-                knowledge_source_sha256=knowledge_store.source_sha256 if knowledge_store else None,
-            )
-        )
-        ops = None
-        if ops_store is not None:
-            from pvdiag.mcp_servers.pv_ops import create_server as ops_server
-            from pvdiag.ops.gateway import OpsGateway
-
-            ops = await stack.enter_async_context(
-                OpsGateway.connect(ops_server(ops_store), ops_store)
-            )
-        graph = build_graph(
-            gateway,
-            reasoner,
-            max_calls=max_calls,
-            max_loops=max_loops,
-            verification_mode=verification_mode,
-            ops_gateway=ops,
-        )
+    async with open_runtime(
+        store,
+        reasoner,
+        max_calls=max_calls,
+        max_loops=max_loops,
+        verification_mode=verification_mode,
+        knowledge_store=knowledge_store,
+        ops_store=ops_store,
+    ) as runtime:
+        graph = runtime.graph
         config = {"configurable": {"thread_id": str(uuid4())}, "recursion_limit": 40}
         state = await graph.ainvoke(
             {"request": request},
