@@ -16,22 +16,45 @@ from pvdiag.agent.state import (
     DiagnosisReport,
     DiagRequest,
     DiagState,
+    ModelReview,
     Plan,
     RunResult,
     Scope,
     ToolCall,
+    VerificationIssue,
+    VerificationRecord,
 )
+from pvdiag.agent.verification import check_domain
 
 DEFAULT_PROMPT = Path(__file__).resolve().parents[3] / "harness" / "system_prompt.md"
+DEFAULT_REVIEW_PROMPT = DEFAULT_PROMPT.with_name("verification_prompt.md")
 
 
 def build_graph(
-    gateway, reasoner, *, max_calls=30, max_loops=3, checkpointer=None, prompt_path=DEFAULT_PROMPT
+    gateway,
+    reasoner,
+    *,
+    max_calls=30,
+    max_loops=3,
+    checkpointer=None,
+    prompt_path=DEFAULT_PROMPT,
+    verification_mode="structural",
+    review_prompt_path=DEFAULT_REVIEW_PROMPT,
 ):
     if not 2 <= max_calls <= 100 or not 1 <= max_loops <= 3:
         raise ValueError("invalid execution budget")
     prompt = prompt_path.read_text()
-    harness_sha = hashlib.sha256(prompt.encode()).hexdigest()
+    if verification_mode not in {"structural", "domain", "domain_llm"}:
+        raise ValueError("invalid verification mode")
+    if verification_mode == "domain_llm" and not callable(getattr(reasoner, "review", None)):
+        raise ValueError("domain_llm requires an explicit model reviewer")
+    review_prompt = review_prompt_path.read_text() if verification_mode == "domain_llm" else ""
+    harness_sha = hashlib.sha256((prompt + review_prompt).encode()).hexdigest()
+    policy_sha = hashlib.sha256(
+        b"\0".join(
+            Path(__file__).with_name(name).read_bytes() for name in ("guards.py", "verification.py")
+        )
+    ).hexdigest()
 
     async def guard_in(state: DiagState):
         started = perf_counter()
@@ -88,6 +111,7 @@ def build_graph(
             "loops": 0,
             "critique": [],
             "started_at": started,
+            "verification": [],
         }
 
     async def plan(state):
@@ -130,9 +154,56 @@ def build_graph(
         except (ValueError, TypeError, RuntimeError):
             return {"verdict": degrade(state["evidence"]), "critique": ["hypothesis_failed"]}
 
-    def verify(state):
-        issues = check_report(state["verdict"], state["evidence"], state["request"], state["scope"])
-        return {"critique": sorted(set(state.get("critique", []) + issues))}
+    async def verify(state):
+        structural = check_report(
+            state["verdict"], state["evidence"], state["request"], state["scope"]
+        )
+        issues = [
+            VerificationIssue(code=code, message="结构化输出或引用校验失败。")
+            for code in structural
+        ]
+        # Invalid citations must be repaired before domain logic dereferences them.
+        if not structural and verification_mode != "structural":
+            issues.extend(
+                check_domain(state["verdict"], state["evidence"], state["request"], state["scope"])
+            )
+        reviewed = False
+        ready = state["plan"].ready_for_verdict and state["verdict"].status in {"fault", "normal"}
+        if verification_mode == "domain_llm" and not structural and ready:
+            try:
+                review = await reasoner.review(state, issues, review_prompt)
+                review = ModelReview.model_validate(
+                    review.model_dump() if isinstance(review, ModelReview) else review
+                )
+                reviewed = True
+                for issue in review.issues:
+                    if set(issue.evidence_ids) - state["evidence"].keys() or (
+                        issue.finding_index is not None
+                        and issue.finding_index >= len(state["verdict"].findings)
+                    ):
+                        raise ValueError("invalid reviewer citations")
+                issues.extend(review.issues)
+            except (ValueError, TypeError, RuntimeError):
+                issues.append(
+                    VerificationIssue(
+                        code="model_review_failed", message="模型自评不可用，不能视为通过。"
+                    )
+                )
+                reviewed = False
+        critique = sorted(
+            set(state.get("critique", []) + [f"{issue.code}: {issue.message}" for issue in issues])
+        )
+        record = VerificationRecord(
+            loop=state["loops"],
+            mode=verification_mode,
+            passed=not critique,
+            issues=issues,
+            model_reviewed=reviewed,
+            checked_evidence_ids=list(state["evidence"]),
+            report_status=state["verdict"].status,
+            ready_for_verdict=state["plan"].ready_for_verdict,
+        )
+        return {"critique": critique, "verification": [*state["verification"], record]}
 
     def route(state):
         repeat = state["critique"] or not state["plan"].ready_for_verdict
@@ -154,6 +225,10 @@ def build_graph(
         verdict = state["verdict"]
         if check_report(verdict, state["evidence"], state["request"], state["scope"]):
             verdict = degrade(state["evidence"])
+        if verification_mode != "structural" and check_domain(
+            verdict, state["evidence"], state["request"], state["scope"]
+        ):
+            verdict = degrade(state["evidence"])
         result = RunResult(
             request=state["request"],
             report=verdict,
@@ -164,6 +239,9 @@ def build_graph(
             model_usage=deepcopy(reasoner.usage),
             harness_sha256=harness_sha,
             duration_seconds=perf_counter() - state["started_at"],
+            verification_mode=verification_mode,
+            verification=state["verification"],
+            verification_policy_sha256=policy_sha,
         )
         return {"verdict": verdict, "result": result}
 

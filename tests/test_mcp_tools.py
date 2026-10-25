@@ -359,6 +359,22 @@ def test_pattern_missing_readings_are_not_counted_as_nonzero(files):
     assert pattern.zero_fraction == 1
 
 
+def test_pattern_loss_hours_require_recurrence_and_off_loss_excludes_them(files):
+    frame = pd.read_parquet(files[0])
+    inv01 = (frame.device_id == "inv01") & (frame.ts >= "2019-01-03")
+    frame.loc[inv01 & (frame.ts.dt.hour == 17), "value"] *= 0.5
+    sporadic = inv01 & frame.ts.between(
+        "2019-01-04 21:00+00:00", "2019-01-04 22:00+00:00", inclusive="left"
+    )
+    frame.loc[sporadic, "value"] *= 0.5
+    frame.to_parquet(files[0], index=False)
+    tools = AnalyticsTools(ObservationStore(*files))
+    pattern = tools.profile_pattern(PeerRequest(**peer(start="2019-01-03"))).result.devices[0]
+    # A single-day dip is not a recurring loss hour, and off-loss is not floored at 0.9.
+    assert pattern.loss_hour_count == 1
+    assert pattern.off_loss_median_ratio == pytest.approx(1.0)
+
+
 def test_resample_labels_stay_inside_the_requested_window(files):
     tools = DataTools(ObservationStore(*files))
     result = tools.get_timeseries(

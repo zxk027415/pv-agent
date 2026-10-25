@@ -112,6 +112,37 @@ class Scope(Model):
     ambient_device_id: str | None
 
 
+class VerificationIssue(Model):
+    code: str = Field(pattern=r"^[a-z_]+$")
+    message: str
+    finding_index: int | None = Field(default=None, ge=0)
+    evidence_ids: list[str] = Field(default_factory=list, max_length=30)
+    suggested_tools: list[ToolName] = Field(default_factory=list, max_length=3)
+
+
+class ModelReview(Model):
+    passed: bool
+    issues: list[VerificationIssue] = Field(default_factory=list, max_length=20)
+
+    @model_validator(mode="after")
+    def consistent_review(self):
+        if self.passed == bool(self.issues):
+            raise ValueError("a passing review has no issues; a failed review requires issues")
+        return self
+
+
+class VerificationRecord(Model):
+    loop: int
+    mode: Literal["structural", "domain", "domain_llm"]
+    version: str = "m2-v1"
+    passed: bool
+    issues: list[VerificationIssue]
+    model_reviewed: bool = False
+    checked_evidence_ids: list[str]
+    report_status: Literal["fault", "normal", "inconclusive", "needs_review"]
+    ready_for_verdict: bool
+
+
 class RunResult(Model):
     request: DiagRequest
     report: DiagnosisReport
@@ -122,6 +153,9 @@ class RunResult(Model):
     model_usage: dict
     harness_sha256: str
     duration_seconds: float
+    verification_mode: Literal["structural", "domain", "domain_llm"] = "structural"
+    verification: list[VerificationRecord] = Field(default_factory=list)
+    verification_policy_sha256: str | None = None
 
 
 class DiagState(TypedDict, total=False):
@@ -135,3 +169,4 @@ class DiagState(TypedDict, total=False):
     verdict: DiagnosisReport
     result: RunResult
     started_at: float
+    verification: list[VerificationRecord]

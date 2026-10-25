@@ -1,6 +1,6 @@
 # PV Diagnosis Agent · 设计文档
 
-> 版本：v0.1（2026-10-24）· 进度更新：2026-10-25，规则诊断链路已实跑，六类原语与 M2 开发候选已生成；DeepSeek 真实调用与 Agent 评测尚未执行
+> 版本：v0.1（2026-10-24）· 进度更新：2026-10-25，规则诊断链路、六类领域核验及 M2 开发候选已离线验证；DeepSeek 单场景已获授权，缺本机凭据，真实模型评测尚未执行
 > 一句话：基于 LangGraph + MCP 的光伏电站时序故障诊断 Agent，在注入已知故障的公开数据上做可复现评测，并用固定评分器驱动 harness 自进化。
 
 ---
@@ -400,7 +400,7 @@ pv-diagnosis-agent/
 
 ## 15. 待决问题
 
-1. **默认 LLM 已选 DeepSeek**（2026-10-25）：OpenAI 兼容接口、function calling；仍待配置安全凭据、授权试跑并核实可固定的实际模型版本。消融可增加其他模型做对照。
+1. **默认 LLM 已选 DeepSeek**（2026-10-25）：OpenAI 兼容接口、function calling；用户已授权一个开发场景、最多 6 次模型调用、每次最多 4096 输出 token。当前仅缺本机安全凭据，尚未消耗授权；试跑后仍需核实可固定的实际模型版本。扩大评测范围需另行授权。
 2. **Langfuse**：用 Cloud 免费档还是自托管？默认 Cloud。
 3. **是否公开仓库**：建议 M2 完成后公开，届时检查 `.gitignore` 和 kb 语料的许可证。
 
@@ -429,11 +429,11 @@ pv-diagnosis-agent/
 | 工程与下载 | 现有 Python 3.11 / uv 配置、匿名 S3 下载器；下载器原有 4 个测试通过。开始本轮时，这些文件尚未提交，本轮保留其工作区状态 |
 | 标准化与数据卡 | 新增 `normalize.py`、`datacard.py`；修正 `.gitignore`，只忽略仓库根目录 `/data/`，避免漏掉数据处理源码 |
 | 2107 实际数据验证 | 原始 electrical、irradiance、environment、meter 四份 CSV；筛选 UTC `[2019-01-01, 2021-01-01)`，生成 **5,383,405** 条长表记录、24 台逆变器及电表/气象测点 |
-| 基线筛查与模拟 | 已实现缺测/日间零值/同站离群筛查、F3/F4 注入、场景真值及数据划分隔离校验；已生成 F3/F4 各 5 个开发冒烟场景，逐个验证落盘结果 |
+| 基线筛查与模拟 | 已实现缺测/日间零值/同站离群筛查、六类注入及双故障、真值与数据划分隔离校验；已生成 10 个 M1 冒烟场景及 80 个 M2 短窗开发候选，未注入候选不能作为正常真值 |
 | 只读 MCP 工具 | pv-data 4 个工具、pv-analytics 5 个工具均已接入 FastMCP / Pydantic；stdio、Streamable HTTP 实测通过；真实场景完成 90 次工具协议调用。2107 缺少可核实的单机物理参数，expected_power 返回 unavailable |
-| 诊断图与评分器 | 已接 LangGraph、原生 MCP 客户端、有界并行取证、结构证据校验及评分器 v1；B0 已跑完 10 个开发冒烟场景，原始报告/轨迹/指标保存在本地 data/eval/m1_smoke/ |
+| 诊断图与评分器 | 已接 LangGraph、原生 MCP 客户端、有界并行取证、结构与可选领域核验、离线自评接口及评分器 v1.1；B0 十场景结构/领域模式回归均为根因/定位 10/10、时间窗 9/10 |
 | M1 剩余工作 | DeepSeek 真实单场景验证及 10 场景 Agent 评测；当前 B0 数字不代表 LLM 成绩。后续还需可核实的物理参数与更完整的基线审核 |
-| M2 | 六类故障原语、短窗开发候选、正常候选隔离和双故障结构已实现；正式基准集审核、完整核验/知识库/审批、LLM 消融尚未完成 |
+| M2 | 六类故障原语、短窗开发候选、正常候选隔离、双故障结构和领域必要证据核验已实现；正式基准集审核、知识库、审批、持久化及 LLM 消融尚未完成 |
 | M3–M4 | 尚未实现；没有进化、泛化或完整消融结果 |
 
 ### 数据核验结论与处理边界
@@ -515,10 +515,10 @@ pv-diagnosis-agent/
 - 新增 `src/pvdiag/agent/`，状态定义、范围检查、MCP 网关、LangGraph、B0 reasoner、LLM reasoner 和单次诊断 CLI 分开；`harness/system_prompt.md` 作为版本化提示词。图为 `guard_in → plan → investigate → hypothesize → verify → report → guard_out`，结构校验失败或计划还需取证时回到 plan，最多三轮、默认最多三十次工具调用。轮次或预算耗尽仍不足时降级人工复核。
 - LangGraph **1.2.17**、LangChain **1.4.7**、langchain-openai **1.7.2** 已安装。**验证出的兼容性差异**：PyPI 最新 langchain-mcp-adapters **0.3.2** 要求 `mcp>=1.24,<2`，FastMCP **4.1.3** 要求 `mcp>=2.2,<3`，uv 无法同时解析。当前使用 FastMCP 原生 Client 连接两个服务，保持 MCP 协议和工具 schema；未强装冲突依赖。
 - 调用前校验节点工具白名单、Pydantic 参数、系统/设备/传感器和查询/参考时间范围；响应校验 schema、实际请求、稳定 evidence_id 哈希及两台服务的观测快照指纹。模型看不到原始 Parquet、场景 ID、基线筛查结果或注入真值。远端错误只保留类型，不把可能含凭据或路径的异常文本传入报告。
-- 报告采用定性置信度。每条结论要求至少两个不同的非元数据工具引用；数值通过 JSON Pointer 精确溯源，时间边界也须对应已有证据时间戳。定性摘要/理由禁止自由嵌入数字；结构核验失败会重试或清除不可信结论，返回 needs_review。**该核验不等于语义忠实度评测，也尚未实现完整的混淆因素排除、自评、知识检索或写操作审批**。
+- 报告采用定性置信度。每条结论要求至少两个不同的非元数据工具引用；数值通过 JSON Pointer 精确溯源，时间边界也须对应已有证据时间戳。定性摘要/理由禁止自由嵌入数字；结构核验失败会重试或清除不可信结论，返回 needs_review。默认仍为结构核验；本次新增可选领域必要证据核验和模型自评，详见后文。**这些检查不等于独立语义忠实度评测，完整混淆因素排除、知识检索和写操作审批仍未完成**。
 - 当前使用进程内 InMemorySaver，已验证检查点保存和读取；没有声称实现跨进程持久化或 PostgresSaver。记忆、pv-ops、审批、中长期存储和服务化 API 仍属于后续工作。
 - B0 用纯代码从辐照摘要选择有足够日间点的参考期，再结合同站低值段/高辐照零值段、形态及分期对比生成可溯源假设，仅覆盖当前 F3/F4；其他情况保守输出 inconclusive，不能认定正常。B0 与 LLM reasoner 共享图及工具协议，但运行元数据明确区分模式。
-- DeepSeek 接口通过 `init_chat_model` 和 `with_structured_output(method="function_calling")` 接入，记录实际返回模型名、输入/输出 token 和缺失用量标记。每次输出最多 4096 token、禁用隐式自动重试、请求有超时与载荷字符上限。已完成真实 SDK 的 schema 构造及注入式离线模型测试，**没有发起收费调用**。调用须显式 `--allow-model-calls`；凭据从 `DEEPSEEK_API_KEY` / `OPENAI_API_KEY` 环境变量或忽略的本地 `.env` 读取，不输出、不入库。仅凭模型别名仍无法证明正式模型版本固定。
+- DeepSeek 接口通过 `init_chat_model` 和 `with_structured_output(method="function_calling")` 接入，记录实际返回模型名、输入/输出 token 和缺失用量标记。每次输出最多 4096 token、禁用隐式自动重试、请求有超时与载荷字符上限。已完成真实 SDK 的 schema 构造及注入式离线模型测试，**没有发起收费调用**。调用须显式 `--allow-model-calls`；DeepSeek 默认只读取 `DEEPSEEK_API_KEY`，OpenAI 只读取 `OPENAI_API_KEY`，其他端点默认读取 `PVDIAG_LLM_API_KEY`，可用 `--credential-env` 显式指定字段；从环境或忽略的本地 `.env` 加载，不输出、不入库，不自动跨提供方回退。仅凭模型别名仍无法证明正式模型版本固定。
 - 新增 `src/pvdiag/eval/scorer.py`（v1）与 `run_bench.py`。评分器为纯代码并记录源码 SHA-256：场景检测 P/R/F1、根因 Top-1/Top-3、设备定位、根因与设备联合匹配、同设备同根因的时间 IoU 命中、拒答、数值引用、工具成功率和用量。双故障使用最大一一匹配并惩罚多报；根因与设备各自正确但对应错误时联合指标为错。只有正常样本才计算误报率，缺失 token 用量标为未知，不填零；LLM-as-Judge 与价格未接入时保持 null。
 - 评分仅在诊断结束后读取真值，诊断图只接收公开的系统、设备和查询窗。当前 runner 只允许 `dev`，留出集在打开观测前即拒绝，避免意外消耗留出评测次数。
 - 当前 **84 个测试通过**，Ruff、格式与 `uv lock --check` 通过；新增测试涵盖真实 LangGraph/MCP 诊断、凭空数值/时间/设备拒绝、越界调用在远端执行前拒绝、证据篡改拒绝、重试修正、预算耗尽、检查点读取、离线结构模型接入、模型错误脱敏，以及评分器的手算 IoU、多故障匹配、正常拒答和缺失用量处理。
@@ -544,7 +544,7 @@ pv-diagnosis-agent/
 .venv/bin/python -m pvdiag.eval.run_bench --mode b0
 ```
 
-单次诊断也可用 `python -m pvdiag.agent 2107 --observations <parquet> --metadata <json> --devices <可见逆变器...> --start <UTC> --end <UTC>`。未来真实 DeepSeek 试跑须在本机安全配置凭据并明确授权费用后，加 `--mode llm --allow-model-calls`；不要把密钥粘贴进聊天或命令记录。下一步验证真实 DeepSeek 调用，再推进六类故障、正常场景、核验/知识库与 M2 消融；M1 尚未按 LLM 端到端标准验收。
+单次诊断也可用 `python -m pvdiag.agent 2107 --observations <parquet> --metadata <json> --devices <可见逆变器...> --start <UTC> --end <UTC>`。DeepSeek 单场景试跑已获授权，凭据就绪后使用 `--mode llm --allow-model-calls --max-model-calls 6 --verification structural`；不要把密钥粘贴进聊天或命令记录，不自动扩大为十场景评测。M1 尚未按 LLM 端到端标准验收。
 
 ### 六类故障原语与 M2 开发候选
 
@@ -568,4 +568,17 @@ pv-diagnosis-agent/
   --per-type 10 --normal-count 20
 ```
 
-后续继续正常基线审核、长窗口数据、六类判别工具/规则、完整核验、知识库与人工审批；真实 DeepSeek 单场景试跑仍等待此前请求的调用授权与本机安全凭据，不把持续推进指令当作收费授权。
+后续继续正常基线审核、长窗口数据、六类判别工具/规则、知识库与人工审批；DeepSeek 单场景调用授权已取得，目前等待本机安全凭据。
+
+### M2 领域核验、自评接口与调用预算
+
+- 新增 `agent/verification.py` 和 `harness/verification_prompt.md`，支持 `--verification structural|domain|domain_llm`。默认 `structural` 保持原结构检查；`domain` 叠加六类必要证据检查；`domain_llm` 再调用模型自评。问题及建议工具反馈到下一轮规划，最终输出守卫再次检查领域证据。未接知识库，不能据此称完整 A3 已实现。
+- 领域条件：F1 需多日缓降及清洗恢复；F2 需多日重复窄时段损失与时段外恢复；F3 需高辐照零值及同站近零；F4 需非零稳定比例损失并排除窄时段遮挡；F5 需 POA 质量、稳定同站关系和使用同参数计算的前后共同物理性能下降与多日趋势；F6 需目标全部可见测点缺失及至少两台同期有效对照。`expected_power=unavailable` 不能充当 F5 支持。
+- 正常结论需完整质量、同站对比、异常排查及独立物理性能支持；不能省略已发现异常，不能以正常平均值覆盖共同下降趋势。以上是**保守的必要条件，不是因果证明或独立语义 Judge**，不能证明已排除所有真实混淆因素。
+- `profile_pattern` 新增重复损失小时数、时段外中位比值、最大日恢复阶跃、恢复时刻和恢复前日斜率。重复小时须跨日出现，时段外统计包含这些小时之外的全部样本；恢复按 UTC 日中位数计算，恢复前斜率至少需三日。证据版本升为 `m2-v1`，其他工具版本保持原值。
+- `RunResult` 记录模式、每轮核验问题、检查过的证据、是否执行自评、报告状态及定论准备状态，并记录 guards/verification 源码的 `verification_policy_sha256`；自评模式的 harness 哈希包含自评提示词。模型判定通过不能覆盖规则失败；伪造自评引用、自评失败及预算不足均不能视为通过。
+- 规划、诊断和自评共享 `--max-model-calls` 硬预算，默认 6，在请求发出前检查；单次输出上限仍为 4096 token，SDK 自动重试为零。启用自评不会自动提高预算，耗尽则保守返回 needs_review。DeepSeek 单例仍选结构模式，避免把新增自评挤入此次授权的预算。
+- 本批全套 **123 个测试通过**，收尾时重跑受影响的 **65 个测试亦通过**；Ruff、本轮 11 个 Python 文件的格式检查、`uv lock --check` 和差异空白检查通过。全仓格式检查仍发现原有未跟踪 `data/download.py` 的格式问题，未改动或纳入本批提交。新增测试以真实工具计算受控数据，覆盖六类支持、错误标签/窗口/来源、正常漏报、自评不能覆盖规则、假自评引用、反馈后重规划修正、共享模型预算与凭据端点隔离；模型自评仅使用离线替身，尚未实调。
+- 已在真实 M1 十场景分别运行结构和领域模式：结果保存在 `data/eval/m1_structural_verification_regression/` 与 `data/eval/m1_domain_verification/`，两组根因/定位均 10/10、时间 IoU 达标 9/10，每场景 8 次工具调用。评分器仍为 v1.1，SHA-256 为 `64dd580859cd91893f654152565596338ba8d66e229759653c520e0298be8364`；没有调整评分标准，仍是 B0 成绩。
+- 真实短窗候选的已知假设组件检查记录于 `data/m2_known_window_verification.json`：F1 恢复证据不足、F2 重复时段证据不足、F5 物理/趋势证据不足，F6 通过。检查已知故障窗口不等于盲诊，不报告为六类 Agent 准确率；正常正式基准和留出集仍未就绪。
+- 最近检查未发现本机 `DEEPSEEK_API_KEY`，也没有 `data/runs/deepseek_authorized_pilot.json` 收据；因此真实请求为零，单场景授权尚未消耗。凭据就绪后仅执行既定 M1 单例，将报告、实际返回模型名及 token 用量写入该收据；不得自动重开预算或运行第二个场景。

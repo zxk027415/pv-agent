@@ -101,10 +101,12 @@ class ObservationStore:
         grid = pd.date_range(lower, upper, freq=freq, inclusive="left")
         return rows.set_index("ts").value.resample(freq, origin=lower).mean().reindex(grid)
 
-    def evidence(self, tool: str, request: Model, result: Model, warnings=()) -> Evidence:
+    def evidence(
+        self, tool: str, request: Model, result: Model, warnings=(), *, version="m1-v1"
+    ) -> Evidence:
         payload = {
             "tool": tool,
-            "version": "m1-v1",
+            "version": version,
             "source_sha256": self.source_sha256,
             "request": request.model_dump(mode="json"),
             "result": result.model_dump(mode="json"),

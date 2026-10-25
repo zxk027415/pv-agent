@@ -231,6 +231,11 @@ class Pattern(Model):
     anomalous_days: int
     peak_loss_local_hour: int | None
     shape: Literal["zero_output", "level_shift", "gradual", "time_localized", "no_clear_pattern"]
+    loss_hour_count: int = 0
+    off_loss_median_ratio: float | None = None
+    largest_daily_recovery: float | None = None
+    recovery_ts: str | None = None
+    pre_recovery_slope_per_day: float | None = None
 
 
 class PatternsResult(Model):

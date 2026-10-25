@@ -3,7 +3,9 @@
 import argparse
 import asyncio
 import os
+import re
 from pathlib import Path
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 from dotenv import dotenv_values
@@ -25,21 +27,36 @@ def reasoner_from_args(args):
     from pvdiag.agent.llm import LLMReasoner
 
     settings = dotenv_values(Path.cwd() / ".env", interpolate=False)
-    key = (
-        os.environ.get("DEEPSEEK_API_KEY")
-        or os.environ.get("OPENAI_API_KEY")
-        or settings.get("DEEPSEEK_API_KEY")
-        or settings.get("OPENAI_API_KEY")
-    )
+    field = getattr(args, "credential_env", None)
+    if field is None:
+        field = {"api.deepseek.com": "DEEPSEEK_API_KEY", "api.openai.com": "OPENAI_API_KEY"}.get(
+            urlsplit(args.base_url).hostname, "PVDIAG_LLM_API_KEY"
+        )
+    if not re.fullmatch(r"[A-Z][A-Z0-9_]{1,63}", field):
+        raise ValueError("invalid credential environment field name")
+    key = os.environ.get(field) or settings.get(field)
     if not key:
-        raise ValueError("set DEEPSEEK_API_KEY or OPENAI_API_KEY in the environment or local .env")
-    return LLMReasoner(args.model, provider="openai", base_url=args.base_url, api_key=key)
+        raise ValueError(f"set {field} in the environment or local .env for this endpoint")
+    return LLMReasoner(
+        args.model,
+        provider="openai",
+        base_url=args.base_url,
+        api_key=key,
+        max_model_calls=getattr(args, "max_model_calls", 6),
+    )
 
 
 def add_model_arguments(parser):
     parser.add_argument("--mode", choices=["b0", "llm"], default="b0")
     parser.add_argument("--model", default="deepseek-chat")
     parser.add_argument("--base-url", default="https://api.deepseek.com")
+    parser.add_argument("--max-model-calls", type=int, default=6)
+    parser.add_argument(
+        "--credential-env", help="explicit credential field for the selected endpoint"
+    )
+    parser.add_argument(
+        "--verification", choices=["structural", "domain", "domain_llm"], default="structural"
+    )
     parser.add_argument(
         "--allow-model-calls",
         action="store_true",
@@ -47,9 +64,17 @@ def add_model_arguments(parser):
     )
 
 
-async def run_diagnosis(store, request, reasoner, *, max_calls=30, max_loops=3):
+async def run_diagnosis(
+    store, request, reasoner, *, max_calls=30, max_loops=3, verification_mode="structural"
+):
     async with MCPGateway.connect(data_server(store), analytics_server(store)) as gateway:
-        graph = build_graph(gateway, reasoner, max_calls=max_calls, max_loops=max_loops)
+        graph = build_graph(
+            gateway,
+            reasoner,
+            max_calls=max_calls,
+            max_loops=max_loops,
+            verification_mode=verification_mode,
+        )
         state = await graph.ainvoke(
             {"request": request},
             config={"configurable": {"thread_id": str(uuid4())}, "recursion_limit": 40},
@@ -73,7 +98,12 @@ def main(argv=None):
     )
     reasoner = reasoner_from_args(args)
     result = asyncio.run(
-        run_diagnosis(ObservationStore(args.observations, args.metadata), request, reasoner)
+        run_diagnosis(
+            ObservationStore(args.observations, args.metadata),
+            request,
+            reasoner,
+            verification_mode=args.verification,
+        )
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(result.model_dump_json(indent=2) + "\n")

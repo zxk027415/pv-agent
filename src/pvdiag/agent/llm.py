@@ -7,13 +7,27 @@ import json
 
 from langchain.chat_models import init_chat_model
 
-from pvdiag.agent.state import DiagnosisReport, Plan
+from pvdiag.agent.state import DiagnosisReport, ModelReview, Plan
 
 
 class LLMReasoner:
     def __init__(
-        self, model: str, *, provider="openai", base_url=None, temperature=0.0, api_key=None
+        self,
+        model: str,
+        *,
+        provider="openai",
+        base_url=None,
+        temperature=0.0,
+        api_key=None,
+        max_model_calls=6,
     ):
+        if not 1 <= max_model_calls <= 30:
+            raise ValueError("invalid model call budget")
+        if base_url and api_key is None:
+            raise ValueError(
+                "custom endpoints require an explicit API key; no implicit credential fallback"
+            )
+        self.max_model_calls = max_model_calls
         kwargs = {
             "model_provider": provider,
             "temperature": temperature,
@@ -32,6 +46,7 @@ class LLMReasoner:
             "provider": provider,
             "temperature": temperature,
             "reported_models": [],
+            "max_model_calls": max_model_calls,
         }
         self.usage = {
             "input_tokens": 0,
@@ -41,6 +56,8 @@ class LLMReasoner:
         }
 
     async def _call(self, schema, payload, prompt):
+        if self.usage["model_calls"] >= self.max_model_calls:
+            raise ValueError("model_call_budget_exhausted")
         serialized = json.dumps(payload, ensure_ascii=False, allow_nan=False)
         if len(serialized) > 80_000:
             raise ValueError("model context exceeds configured character budget")
@@ -78,6 +95,11 @@ class LLMReasoner:
                 "scope": state["scope"].model_dump(),
                 "evidence": state["evidence"],
                 "critique": state["critique"],
+                "verification_issues": [
+                    issue.model_dump() for issue in state["verification"][-1].issues
+                ]
+                if state.get("verification")
+                else [],
                 "tool_failures": [
                     {"name": t.name, "error": t.error} for t in state["trace"] if not t.success
                 ],
@@ -93,6 +115,19 @@ class LLMReasoner:
                 "task": "hypothesize",
                 "request": state["request"].model_dump(mode="json"),
                 "evidence": state["evidence"],
+            },
+            prompt,
+        )
+
+    async def review(self, state, issues, prompt):
+        return await self._call(
+            ModelReview,
+            {
+                "task": "verify",
+                "request": state["request"].model_dump(mode="json"),
+                "report": state["verdict"].model_dump(mode="json"),
+                "evidence": state["evidence"],
+                "rule_issues": [issue.model_dump() for issue in issues],
             },
             prompt,
         )

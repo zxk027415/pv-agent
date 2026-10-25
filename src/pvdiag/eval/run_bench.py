@@ -13,7 +13,9 @@ from pvdiag.eval.scorer import aggregate, score_case
 from pvdiag.mcp_servers.store import ObservationStore
 
 
-async def run_benchmark(manifest, scenario_root, metadata, output, reasoner_factory):
+async def run_benchmark(
+    manifest, scenario_root, metadata, output, reasoner_factory, *, verification_mode="structural"
+):
     scenarios = manifest["scenarios"]
     if not scenarios or any(s["split"] != "dev" for s in scenarios):
         raise ValueError(
@@ -42,7 +44,9 @@ async def run_benchmark(manifest, scenario_root, metadata, output, reasoner_fact
             start=scenario["query_window"][0],
             end=scenario["query_window"][1],
         )
-        result = await run_diagnosis(store, request, reasoner_factory())
+        result = await run_diagnosis(
+            store, request, reasoner_factory(), verification_mode=verification_mode
+        )
         (output / f"{scenario_id}.json").write_text(result.model_dump_json(indent=2) + "\n")
         cases.append(score_case(scenario, result))
         metadata_models.append(result.model)
@@ -58,6 +62,7 @@ async def run_benchmark(manifest, scenario_root, metadata, output, reasoner_fact
             name: version(name) for name in ("langgraph", "langchain", "fastmcp", "pydantic")
         },
         "python": platform.python_version(),
+        "verification_mode": verification_mode,
         "limitations": [
             "Screened baseline is not manually verified healthy.",
             "No held-out, normal-scene, or LLM-as-Judge evaluation in this smoke set.",
@@ -86,6 +91,7 @@ def main(argv=None):
             args.metadata,
             args.output,
             lambda: reasoner_from_args(args),
+            verification_mode=args.verification,
         )
     )
     print(json.dumps(summary["metrics"], indent=2, allow_nan=False))

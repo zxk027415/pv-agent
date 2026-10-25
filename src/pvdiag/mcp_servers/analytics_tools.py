@@ -145,6 +145,30 @@ class AnalyticsTools:
             local = loss.index.tz_convert(timezone)
             anomalous_days = len(set(local.date))
             peak_hour = int(pd.Series(local.hour).mode().iloc[0]) if len(loss) else None
+            # Loss hours must recur across days; off-loss uses every other sample so it can
+            # fall below the loss threshold when losses are scattered outside those hours.
+            value_local = values.index.tz_convert(timezone)
+            recurring = (
+                pd.Series(local.date, index=local.hour).groupby(level=0).nunique()
+                if len(loss)
+                else pd.Series(dtype=int)
+            )
+            loss_hours = set(recurring[recurring >= min(3, len(set(value_local.date)))].index)
+            off_loss = values[~value_local.hour.isin(sorted(loss_hours))]
+            daily = values.resample("1D").median().dropna()
+            recovery, recovery_ts, before_slope = None, None, None
+            if len(daily) >= 4:
+                changes = daily.diff().dropna()
+                if changes.max() > 0:
+                    change_time = changes.idxmax()
+                    recovery, recovery_ts = finite(changes.max()), change_time.isoformat()
+                    before = daily[daily.index < change_time]
+                    if len(before) >= 3:
+                        elapsed_days = pd.Series(
+                            (before.index - before.index[0]).total_seconds() / 86400,
+                            index=before.index,
+                        )
+                        before_slope = finite(before.cov(elapsed_days) / elapsed_days.var())
             if zero_fraction is not None and zero_fraction >= 0.5:
                 shape = "zero_output"
             elif median is not None and median < 0.9 and iqr is not None and iqr < 0.08:
@@ -167,6 +191,11 @@ class AnalyticsTools:
                     anomalous_days=anomalous_days,
                     peak_loss_local_hour=peak_hour,
                     shape=shape,
+                    loss_hour_count=len(loss_hours),
+                    off_loss_median_ratio=finite(off_loss.median()) if len(off_loss) else None,
+                    largest_daily_recovery=recovery,
+                    recovery_ts=recovery_ts,
+                    pre_recovery_slope_per_day=before_slope,
                 )
             )
         return self.store.evidence(
@@ -174,8 +203,10 @@ class AnalyticsTools:
             request,
             PatternsResult(local_timezone=timezone, devices=devices),
             [
-                "Shape labels are descriptive heuristics, not root-cause verdicts; profile the anomaly interval."
+                "Shape labels are descriptive heuristics, not root-cause verdicts; profile the anomaly interval.",
+                "Recovery is the largest positive UTC daily-median peer-ratio step; preceding slope requires three days.",
             ],
+            version="m2-v1",
         )
 
     def compare_periods(self, request: CompareRequest) -> Evidence[PeriodsResult]:
