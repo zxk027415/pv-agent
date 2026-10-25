@@ -1,0 +1,1147 @@
+{
+  "schema_version": 1,
+  "purpose": "development_smoke",
+  "source_sha256": "05a67164650c1a7a779fa8631620a09f87e23ec9994b8284f4c1779d27b71de3",
+  "truth_scope": "injected_faults_only",
+  "generator_version": "m1-v1",
+  "selection_window": [
+    "2019-01-01T00:00:00+00:00",
+    "2019-07-01T00:00:00+00:00"
+  ],
+  "development_devices": [
+    "inv01",
+    "inv02",
+    "inv03",
+    "inv04",
+    "inv05",
+    "inv06",
+    "inv07",
+    "inv08",
+    "inv09",
+    "inv10",
+    "inv11",
+    "inv12"
+  ],
+  "scenarios": [
+    {
+      "scenario_id": "S2107-F3-0001",
+      "system_id": 2107,
+      "query_window": [
+        "2019-01-08T00:00:00+00:00",
+        "2019-01-15T00:00:00+00:00"
+      ],
+      "device_ids": [
+        "inv03",
+        "inv04",
+        "inv05"
+      ],
+      "poa_device_id": "sensor_149574",
+      "faults": [
+        {
+          "type": "F3",
+          "device_id": "inv03",
+          "start": "2019-01-12T19:30:00+00:00",
+          "end": "2019-01-12T22:30:00+00:00",
+          "params": {
+            "poa_device_id": "sensor_149574",
+            "irradiance_threshold_wm2": 200.0,
+            "alignment": "UTC 15min bin mean; no interpolation"
+          }
+        }
+      ],
+      "difficulty": "easy",
+      "split": "dev",
+      "truth_scope": "injected_faults_only",
+      "baseline_screen": {
+        "schema_version": 1,
+        "system_id": 2107,
+        "window": [
+          "2019-01-08T00:00:00+00:00",
+          "2019-01-15T00:00:00+00:00"
+        ],
+        "poa_device_id": "sensor_149574",
+        "poa_coverage": 1.0,
+        "daylight_bins": 99,
+        "devices": [
+          {
+            "device_id": "inv03",
+            "coverage": 1.0,
+            "daylight_missing_bins": 0,
+            "daylight_near_zero_bins": 0,
+            "negative_power_bins": 0,
+            "daylight_uncomparable_bins": 0,
+            "daylight_peer_outlier_bins": 0,
+            "empirical_p95_kw": 27.117533333333334,
+            "eligible": true
+          },
+          {
+            "device_id": "inv04",
+            "coverage": 1.0,
+            "daylight_missing_bins": 0,
+            "daylight_near_zero_bins": 0,
+            "negative_power_bins": 0,
+            "daylight_uncomparable_bins": 0,
+            "daylight_peer_outlier_bins": 0,
+            "empirical_p95_kw": 26.982499999999998,
+            "eligible": true
+          },
+          {
+            "device_id": "inv05",
+            "coverage": 1.0,
+            "daylight_missing_bins": 0,
+            "daylight_near_zero_bins": 0,
+            "negative_power_bins": 0,
+            "daylight_uncomparable_bins": 0,
+            "daylight_peer_outlier_bins": 0,
+            "empirical_p95_kw": 26.675666666666668,
+            "eligible": true
+          }
+        ],
+        "eligible_devices": [
+          "inv03",
+          "inv04",
+          "inv05"
+        ],
+        "status": "screened_not_manually_verified",
+        "screening_version": "m1-v1",
+        "thresholds": {
+          "daylight_wm2": 200.0,
+          "coverage": 0.99,
+          "minimum_daylight_bins": 16,
+          "near_zero_kw": 0.1,
+          "peer_ratio": [
+            0.85,
+            1.2
+          ],
+          "minimum_valid_peers": 2
+        },
+        "limitations": "Heuristic screening may miss persistent faults; no normal ground truth."
+      },
+      "injection": {
+        "fault": {
+          "type": "F3",
+          "device_id": "inv03",
+          "start": "2019-01-12T19:30:00+00:00",
+          "end": "2019-01-12T22:30:00+00:00",
+          "params": {
+            "poa_device_id": "sensor_149574",
+            "irradiance_threshold_wm2": 200.0,
+            "alignment": "UTC 15min bin mean; no interpolation"
+          }
+        },
+        "changed_rows": 36,
+        "first_changed_ts": "2019-01-12T19:30:00+00:00",
+        "last_changed_ts": "2019-01-12T22:25:00+00:00",
+        "input_rows": 8736,
+        "output_rows": 8736,
+        "changed_metric": "ac_power_kw"
+      }
+    },
+    {
+      "scenario_id": "S2107-F4-0001",
+      "system_id": 2107,
+      "query_window": [
+        "2019-01-08T00:00:00+00:00",
+        "2019-01-15T00:00:00+00:00"
+      ],
+      "device_ids": [
+        "inv03",
+        "inv04",
+        "inv05"
+      ],
+      "poa_device_id": "sensor_149574",
+      "faults": [
+        {
+          "type": "F4",
+          "device_id": "inv04",
+          "start": "2019-01-11T00:00:00+00:00",
+          "end": "2019-01-15T00:00:00+00:00",
+          "params": {
+            "loss_fraction": 0.125
+          }
+        }
+      ],
+      "difficulty": "easy",
+      "split": "dev",
+      "truth_scope": "injected_faults_only",
+      "baseline_screen": {
+        "schema_version": 1,
+        "system_id": 2107,
+        "window": [
+          "2019-01-08T00:00:00+00:00",
+          "2019-01-15T00:00:00+00:00"
+        ],
+        "poa_device_id": "sensor_149574",
+        "poa_coverage": 1.0,
+        "daylight_bins": 99,
+        "devices": [
+          {
+            "device_id": "inv03",
+            "coverage": 1.0,
+            "daylight_missing_bins": 0,
+            "daylight_near_zero_bins": 0,
+            "negative_power_bins": 0,
+            "daylight_uncomparable_bins": 0,
+            "daylight_peer_outlier_bins": 0,
+            "empirical_p95_kw": 27.117533333333334,
+            "eligible": true
+          },
+          {
+            "device_id": "inv04",
+            "coverage": 1.0,
+            "daylight_missing_bins": 0,
+            "daylight_near_zero_bins": 0,
+            "negative_power_bins": 0,
+            "daylight_uncomparable_bins": 0,
+            "daylight_peer_outlier_bins": 0,
+            "empirical_p95_kw": 26.982499999999998,
+            "eligible": true
+          },
+          {
+            "device_id": "inv05",
+            "coverage": 1.0,
+            "daylight_missing_bins": 0,
+            "daylight_near_zero_bins": 0,
+            "negative_power_bins": 0,
+            "daylight_uncomparable_bins": 0,
+            "daylight_peer_outlier_bins": 0,
+            "empirical_p95_kw": 26.675666666666668,
+            "eligible": true
+          }
+        ],
+        "eligible_devices": [
+          "inv03",
+          "inv04",
+          "inv05"
+        ],
+        "status": "screened_not_manually_verified",
+        "screening_version": "m1-v1",
+        "thresholds": {
+          "daylight_wm2": 200.0,
+          "coverage": 0.99,
+          "minimum_daylight_bins": 16,
+          "near_zero_kw": 0.1,
+          "peer_ratio": [
+            0.85,
+            1.2
+          ],
+          "minimum_valid_peers": 2
+        },
+        "limitations": "Heuristic screening may miss persistent faults; no normal ground truth."
+      },
+      "injection": {
+        "fault": {
+          "type": "F4",
+          "device_id": "inv04",
+          "start": "2019-01-11T00:00:00+00:00",
+          "end": "2019-01-15T00:00:00+00:00",
+          "params": {
+            "loss_fraction": 0.125
+          }
+        },
+        "changed_rows": 439,
+        "first_changed_ts": "2019-01-11T00:00:00+00:00",
+        "last_changed_ts": "2019-01-14T23:55:00+00:00",
+        "input_rows": 8736,
+        "output_rows": 8736,
+        "changed_metric": "ac_power_kw"
+      }
+    },
+    {
+      "scenario_id": "S2107-F3-0002",
+      "system_id": 2107,
+      "query_window": [
+        "2019-01-15T00:00:00+00:00",
+        "2019-01-22T00:00:00+00:00"
+      ],
+      "device_ids": [
+        "inv04",
+        "inv07",
+        "inv10"
+      ],
+      "poa_device_id": "sensor_149574",
+      "faults": [
+        {
+          "type": "F3",
+          "device_id": "inv04",
+          "start": "2019-01-19T20:30:00+00:00",
+          "end": "2019-01-19T23:30:00+00:00",
+          "params": {
+            "poa_device_id": "sensor_149574",
+            "irradiance_threshold_wm2": 200.0,
+            "alignment": "UTC 15min bin mean; no interpolation"
+          }
+        }
+      ],
+      "difficulty": "easy",
+      "split": "dev",
+      "truth_scope": "injected_faults_only",
+      "baseline_screen": {
+        "schema_version": 1,
+        "system_id": 2107,
+        "window": [
+          "2019-01-15T00:00:00+00:00",
+          "2019-01-22T00:00:00+00:00"
+        ],
+        "poa_device_id": "sensor_149574",
+        "poa_coverage": 1.0,
+        "daylight_bins": 99,
+        "devices": [
+          {
+            "device_id": "inv04",
+            "coverage": 1.0,
+            "daylight_missing_bins": 0,
+            "daylight_near_zero_bins": 0,
+            "negative_power_bins": 0,
+            "daylight_uncomparable_bins": 0,
+            "daylight_peer_outlier_bins": 0,
+            "empirical_p95_kw": 28.622933333333332,
+            "eligible": true
+          },
+          {
+            "device_id": "inv07",
+            "coverage": 1.0,
+            "daylight_missing_bins": 0,
+            "daylight_near_zero_bins": 0,
+            "negative_power_bins": 0,
+            "daylight_uncomparable_bins": 0,
+            "daylight_peer_outlier_bins": 0,
+            "empirical_p95_kw": 28.389633333333332,
+            "eligible": true
+          },
+          {
+            "device_id": "inv10",
+            "coverage": 1.0,
+            "daylight_missing_bins": 0,
+            "daylight_near_zero_bins": 0,
+            "negative_power_bins": 0,
+            "daylight_uncomparable_bins": 0,
+            "daylight_peer_outlier_bins": 0,
+            "empirical_p95_kw": 28.40293333333333,
+            "eligible": true
+          }
+        ],
+        "eligible_devices": [
+          "inv04",
+          "inv07",
+          "inv10"
+        ],
+        "status": "screened_not_manually_verified",
+        "screening_version": "m1-v1",
+        "thresholds": {
+          "daylight_wm2": 200.0,
+          "coverage": 0.99,
+          "minimum_daylight_bins": 16,
+          "near_zero_kw": 0.1,
+          "peer_ratio": [
+            0.85,
+            1.2
+          ],
+          "minimum_valid_peers": 2
+        },
+        "limitations": "Heuristic screening may miss persistent faults; no normal ground truth."
+      },
+      "injection": {
+        "fault": {
+          "type": "F3",
+          "device_id": "inv04",
+          "start": "2019-01-19T20:30:00+00:00",
+          "end": "2019-01-19T23:30:00+00:00",
+          "params": {
+            "poa_device_id": "sensor_149574",
+            "irradiance_threshold_wm2": 200.0,
+            "alignment": "UTC 15min bin mean; no interpolation"
+          }
+        },
+        "changed_rows": 30,
+        "first_changed_ts": "2019-01-19T20:30:00+00:00",
+        "last_changed_ts": "2019-01-19T22:55:00+00:00",
+        "input_rows": 8735,
+        "output_rows": 8735,
+        "changed_metric": "ac_power_kw"
+      }
+    },
+    {
+      "scenario_id": "S2107-F4-0002",
+      "system_id": 2107,
+      "query_window": [
+        "2019-01-15T00:00:00+00:00",
+        "2019-01-22T00:00:00+00:00"
+      ],
+      "device_ids": [
+        "inv04",
+        "inv07",
+        "inv10"
+      ],
+      "poa_device_id": "sensor_149574",
+      "faults": [
+        {
+          "type": "F4",
+          "device_id": "inv07",
+          "start": "2019-01-18T00:00:00+00:00",
+          "end": "2019-01-22T00:00:00+00:00",
+          "params": {
+            "loss_fraction": 0.25
+          }
+        }
+      ],
+      "difficulty": "easy",
+      "split": "dev",
+      "truth_scope": "injected_faults_only",
+      "baseline_screen": {
+        "schema_version": 1,
+        "system_id": 2107,
+        "window": [
+          "2019-01-15T00:00:00+00:00",
+          "2019-01-22T00:00:00+00:00"
+        ],
+        "poa_device_id": "sensor_149574",
+        "poa_coverage": 1.0,
+        "daylight_bins": 99,
+        "devices": [
+          {
+            "device_id": "inv04",
+            "coverage": 1.0,
+            "daylight_missing_bins": 0,
+            "daylight_near_zero_bins": 0,
+            "negative_power_bins": 0,
+            "daylight_uncomparable_bins": 0,
+            "daylight_peer_outlier_bins": 0,
+            "empirical_p95_kw": 28.622933333333332,
+            "eligible": true
+          },
+          {
+            "device_id": "inv07",
+            "coverage": 1.0,
+            "daylight_missing_bins": 0,
+            "daylight_near_zero_bins": 0,
+            "negative_power_bins": 0,
+            "daylight_uncomparable_bins": 0,
+            "daylight_peer_outlier_bins": 0,
+            "empirical_p95_kw": 28.389633333333332,
+            "eligible": true
+          },
+          {
+            "device_id": "inv10",
+            "coverage": 1.0,
+            "daylight_missing_bins": 0,
+            "daylight_near_zero_bins": 0,
+            "negative_power_bins": 0,
+            "daylight_uncomparable_bins": 0,
+            "daylight_peer_outlier_bins": 0,
+            "empirical_p95_kw": 28.40293333333333,
+            "eligible": true
+          }
+        ],
+        "eligible_devices": [
+          "inv04",
+          "inv07",
+          "inv10"
+        ],
+        "status": "screened_not_manually_verified",
+        "screening_version": "m1-v1",
+        "thresholds": {
+          "daylight_wm2": 200.0,
+          "coverage": 0.99,
+          "minimum_daylight_bins": 16,
+          "near_zero_kw": 0.1,
+          "peer_ratio": [
+            0.85,
+            1.2
+          ],
+          "minimum_valid_peers": 2
+        },
+        "limitations": "Heuristic screening may miss persistent faults; no normal ground truth."
+      },
+      "injection": {
+        "fault": {
+          "type": "F4",
+          "device_id": "inv07",
+          "start": "2019-01-18T00:00:00+00:00",
+          "end": "2019-01-22T00:00:00+00:00",
+          "params": {
+            "loss_fraction": 0.25
+          }
+        },
+        "changed_rows": 453,
+        "first_changed_ts": "2019-01-18T00:00:00+00:00",
+        "last_changed_ts": "2019-01-21T23:55:00+00:00",
+        "input_rows": 8735,
+        "output_rows": 8735,
+        "changed_metric": "ac_power_kw"
+      }
+    },
+    {
+      "scenario_id": "S2107-F3-0003",
+      "system_id": 2107,
+      "query_window": [
+        "2019-01-22T00:00:00+00:00",
+        "2019-01-29T00:00:00+00:00"
+      ],
+      "device_ids": [
+        "inv05",
+        "inv07",
+        "inv10"
+      ],
+      "poa_device_id": "sensor_149574",
+      "faults": [
+        {
+          "type": "F3",
+          "device_id": "inv05",
+          "start": "2019-01-25T22:45:00+00:00",
+          "end": "2019-01-26T01:45:00+00:00",
+          "params": {
+            "poa_device_id": "sensor_149574",
+            "irradiance_threshold_wm2": 200.0,
+            "alignment": "UTC 15min bin mean; no interpolation"
+          }
+        }
+      ],
+      "difficulty": "easy",
+      "split": "dev",
+      "truth_scope": "injected_faults_only",
+      "baseline_screen": {
+        "schema_version": 1,
+        "system_id": 2107,
+        "window": [
+          "2019-01-22T00:00:00+00:00",
+          "2019-01-29T00:00:00+00:00"
+        ],
+        "poa_device_id": "sensor_149574",
+        "poa_coverage": 1.0,
+        "daylight_bins": 214,
+        "devices": [
+          {
+            "device_id": "inv05",
+            "coverage": 1.0,
+            "daylight_missing_bins": 0,
+            "daylight_near_zero_bins": 0,
+            "negative_power_bins": 0,
+            "daylight_uncomparable_bins": 0,
+            "daylight_peer_outlier_bins": 0,
+            "empirical_p95_kw": 29.633549999999996,
+            "eligible": true
+          },
+          {
+            "device_id": "inv07",
+            "coverage": 1.0,
+            "daylight_missing_bins": 0,
+            "daylight_near_zero_bins": 0,
+            "negative_power_bins": 0,
+            "daylight_uncomparable_bins": 0,
+            "daylight_peer_outlier_bins": 0,
+            "empirical_p95_kw": 29.78045,
+            "eligible": true
+          },
+          {
+            "device_id": "inv10",
+            "coverage": 1.0,
+            "daylight_missing_bins": 0,
+            "daylight_near_zero_bins": 0,
+            "negative_power_bins": 0,
+            "daylight_uncomparable_bins": 0,
+            "daylight_peer_outlier_bins": 0,
+            "empirical_p95_kw": 29.761516666666665,
+            "eligible": true
+          }
+        ],
+        "eligible_devices": [
+          "inv05",
+          "inv07",
+          "inv10"
+        ],
+        "status": "screened_not_manually_verified",
+        "screening_version": "m1-v1",
+        "thresholds": {
+          "daylight_wm2": 200.0,
+          "coverage": 0.99,
+          "minimum_daylight_bins": 16,
+          "near_zero_kw": 0.1,
+          "peer_ratio": [
+            0.85,
+            1.2
+          ],
+          "minimum_valid_peers": 2
+        },
+        "limitations": "Heuristic screening may miss persistent faults; no normal ground truth."
+      },
+      "injection": {
+        "fault": {
+          "type": "F3",
+          "device_id": "inv05",
+          "start": "2019-01-25T22:45:00+00:00",
+          "end": "2019-01-26T01:45:00+00:00",
+          "params": {
+            "poa_device_id": "sensor_149574",
+            "irradiance_threshold_wm2": 200.0,
+            "alignment": "UTC 15min bin mean; no interpolation"
+          }
+        },
+        "changed_rows": 24,
+        "first_changed_ts": "2019-01-25T22:45:00+00:00",
+        "last_changed_ts": "2019-01-26T00:40:00+00:00",
+        "input_rows": 8736,
+        "output_rows": 8736,
+        "changed_metric": "ac_power_kw"
+      }
+    },
+    {
+      "scenario_id": "S2107-F4-0003",
+      "system_id": 2107,
+      "query_window": [
+        "2019-01-22T00:00:00+00:00",
+        "2019-01-29T00:00:00+00:00"
+      ],
+      "device_ids": [
+        "inv05",
+        "inv07",
+        "inv10"
+      ],
+      "poa_device_id": "sensor_149574",
+      "faults": [
+        {
+          "type": "F4",
+          "device_id": "inv07",
+          "start": "2019-01-25T00:00:00+00:00",
+          "end": "2019-01-29T00:00:00+00:00",
+          "params": {
+            "loss_fraction": 0.125
+          }
+        }
+      ],
+      "difficulty": "easy",
+      "split": "dev",
+      "truth_scope": "injected_faults_only",
+      "baseline_screen": {
+        "schema_version": 1,
+        "system_id": 2107,
+        "window": [
+          "2019-01-22T00:00:00+00:00",
+          "2019-01-29T00:00:00+00:00"
+        ],
+        "poa_device_id": "sensor_149574",
+        "poa_coverage": 1.0,
+        "daylight_bins": 214,
+        "devices": [
+          {
+            "device_id": "inv05",
+            "coverage": 1.0,
+            "daylight_missing_bins": 0,
+            "daylight_near_zero_bins": 0,
+            "negative_power_bins": 0,
+            "daylight_uncomparable_bins": 0,
+            "daylight_peer_outlier_bins": 0,
+            "empirical_p95_kw": 29.633549999999996,
+            "eligible": true
+          },
+          {
+            "device_id": "inv07",
+            "coverage": 1.0,
+            "daylight_missing_bins": 0,
+            "daylight_near_zero_bins": 0,
+            "negative_power_bins": 0,
+            "daylight_uncomparable_bins": 0,
+            "daylight_peer_outlier_bins": 0,
+            "empirical_p95_kw": 29.78045,
+            "eligible": true
+          },
+          {
+            "device_id": "inv10",
+            "coverage": 1.0,
+            "daylight_missing_bins": 0,
+            "daylight_near_zero_bins": 0,
+            "negative_power_bins": 0,
+            "daylight_uncomparable_bins": 0,
+            "daylight_peer_outlier_bins": 0,
+            "empirical_p95_kw": 29.761516666666665,
+            "eligible": true
+          }
+        ],
+        "eligible_devices": [
+          "inv05",
+          "inv07",
+          "inv10"
+        ],
+        "status": "screened_not_manually_verified",
+        "screening_version": "m1-v1",
+        "thresholds": {
+          "daylight_wm2": 200.0,
+          "coverage": 0.99,
+          "minimum_daylight_bins": 16,
+          "near_zero_kw": 0.1,
+          "peer_ratio": [
+            0.85,
+            1.2
+          ],
+          "minimum_valid_peers": 2
+        },
+        "limitations": "Heuristic screening may miss persistent faults; no normal ground truth."
+      },
+      "injection": {
+        "fault": {
+          "type": "F4",
+          "device_id": "inv07",
+          "start": "2019-01-25T00:00:00+00:00",
+          "end": "2019-01-29T00:00:00+00:00",
+          "params": {
+            "loss_fraction": 0.125
+          }
+        },
+        "changed_rows": 473,
+        "first_changed_ts": "2019-01-25T00:00:00+00:00",
+        "last_changed_ts": "2019-01-28T23:55:00+00:00",
+        "input_rows": 8736,
+        "output_rows": 8736,
+        "changed_metric": "ac_power_kw"
+      }
+    },
+    {
+      "scenario_id": "S2107-F3-0004",
+      "system_id": 2107,
+      "query_window": [
+        "2019-02-26T00:00:00+00:00",
+        "2019-03-05T00:00:00+00:00"
+      ],
+      "device_ids": [
+        "inv01",
+        "inv04",
+        "inv05"
+      ],
+      "poa_device_id": "sensor_149574",
+      "faults": [
+        {
+          "type": "F3",
+          "device_id": "inv01",
+          "start": "2019-03-01T20:15:00+00:00",
+          "end": "2019-03-01T23:15:00+00:00",
+          "params": {
+            "poa_device_id": "sensor_149574",
+            "irradiance_threshold_wm2": 200.0,
+            "alignment": "UTC 15min bin mean; no interpolation"
+          }
+        }
+      ],
+      "difficulty": "easy",
+      "split": "dev",
+      "truth_scope": "injected_faults_only",
+      "baseline_screen": {
+        "schema_version": 1,
+        "system_id": 2107,
+        "window": [
+          "2019-02-26T00:00:00+00:00",
+          "2019-03-05T00:00:00+00:00"
+        ],
+        "poa_device_id": "sensor_149574",
+        "poa_coverage": 1.0,
+        "daylight_bins": 133,
+        "devices": [
+          {
+            "device_id": "inv01",
+            "coverage": 1.0,
+            "daylight_missing_bins": 0,
+            "daylight_near_zero_bins": 0,
+            "negative_power_bins": 0,
+            "daylight_uncomparable_bins": 0,
+            "daylight_peer_outlier_bins": 0,
+            "empirical_p95_kw": 29.972600000000003,
+            "eligible": true
+          },
+          {
+            "device_id": "inv04",
+            "coverage": 1.0,
+            "daylight_missing_bins": 0,
+            "daylight_near_zero_bins": 0,
+            "negative_power_bins": 0,
+            "daylight_uncomparable_bins": 0,
+            "daylight_peer_outlier_bins": 0,
+            "empirical_p95_kw": 29.970866666666666,
+            "eligible": true
+          },
+          {
+            "device_id": "inv05",
+            "coverage": 1.0,
+            "daylight_missing_bins": 0,
+            "daylight_near_zero_bins": 0,
+            "negative_power_bins": 0,
+            "daylight_uncomparable_bins": 0,
+            "daylight_peer_outlier_bins": 0,
+            "empirical_p95_kw": 29.969866666666665,
+            "eligible": true
+          }
+        ],
+        "eligible_devices": [
+          "inv01",
+          "inv04",
+          "inv05"
+        ],
+        "status": "screened_not_manually_verified",
+        "screening_version": "m1-v1",
+        "thresholds": {
+          "daylight_wm2": 200.0,
+          "coverage": 0.99,
+          "minimum_daylight_bins": 16,
+          "near_zero_kw": 0.1,
+          "peer_ratio": [
+            0.85,
+            1.2
+          ],
+          "minimum_valid_peers": 2
+        },
+        "limitations": "Heuristic screening may miss persistent faults; no normal ground truth."
+      },
+      "injection": {
+        "fault": {
+          "type": "F3",
+          "device_id": "inv01",
+          "start": "2019-03-01T20:15:00+00:00",
+          "end": "2019-03-01T23:15:00+00:00",
+          "params": {
+            "poa_device_id": "sensor_149574",
+            "irradiance_threshold_wm2": 200.0,
+            "alignment": "UTC 15min bin mean; no interpolation"
+          }
+        },
+        "changed_rows": 36,
+        "first_changed_ts": "2019-03-01T20:15:00+00:00",
+        "last_changed_ts": "2019-03-01T23:10:00+00:00",
+        "input_rows": 8736,
+        "output_rows": 8736,
+        "changed_metric": "ac_power_kw"
+      }
+    },
+    {
+      "scenario_id": "S2107-F4-0004",
+      "system_id": 2107,
+      "query_window": [
+        "2019-02-26T00:00:00+00:00",
+        "2019-03-05T00:00:00+00:00"
+      ],
+      "device_ids": [
+        "inv01",
+        "inv04",
+        "inv05"
+      ],
+      "poa_device_id": "sensor_149574",
+      "faults": [
+        {
+          "type": "F4",
+          "device_id": "inv04",
+          "start": "2019-03-01T00:00:00+00:00",
+          "end": "2019-03-05T00:00:00+00:00",
+          "params": {
+            "loss_fraction": 0.25
+          }
+        }
+      ],
+      "difficulty": "easy",
+      "split": "dev",
+      "truth_scope": "injected_faults_only",
+      "baseline_screen": {
+        "schema_version": 1,
+        "system_id": 2107,
+        "window": [
+          "2019-02-26T00:00:00+00:00",
+          "2019-03-05T00:00:00+00:00"
+        ],
+        "poa_device_id": "sensor_149574",
+        "poa_coverage": 1.0,
+        "daylight_bins": 133,
+        "devices": [
+          {
+            "device_id": "inv01",
+            "coverage": 1.0,
+            "daylight_missing_bins": 0,
+            "daylight_near_zero_bins": 0,
+            "negative_power_bins": 0,
+            "daylight_uncomparable_bins": 0,
+            "daylight_peer_outlier_bins": 0,
+            "empirical_p95_kw": 29.972600000000003,
+            "eligible": true
+          },
+          {
+            "device_id": "inv04",
+            "coverage": 1.0,
+            "daylight_missing_bins": 0,
+            "daylight_near_zero_bins": 0,
+            "negative_power_bins": 0,
+            "daylight_uncomparable_bins": 0,
+            "daylight_peer_outlier_bins": 0,
+            "empirical_p95_kw": 29.970866666666666,
+            "eligible": true
+          },
+          {
+            "device_id": "inv05",
+            "coverage": 1.0,
+            "daylight_missing_bins": 0,
+            "daylight_near_zero_bins": 0,
+            "negative_power_bins": 0,
+            "daylight_uncomparable_bins": 0,
+            "daylight_peer_outlier_bins": 0,
+            "empirical_p95_kw": 29.969866666666665,
+            "eligible": true
+          }
+        ],
+        "eligible_devices": [
+          "inv01",
+          "inv04",
+          "inv05"
+        ],
+        "status": "screened_not_manually_verified",
+        "screening_version": "m1-v1",
+        "thresholds": {
+          "daylight_wm2": 200.0,
+          "coverage": 0.99,
+          "minimum_daylight_bins": 16,
+          "near_zero_kw": 0.1,
+          "peer_ratio": [
+            0.85,
+            1.2
+          ],
+          "minimum_valid_peers": 2
+        },
+        "limitations": "Heuristic screening may miss persistent faults; no normal ground truth."
+      },
+      "injection": {
+        "fault": {
+          "type": "F4",
+          "device_id": "inv04",
+          "start": "2019-03-01T00:00:00+00:00",
+          "end": "2019-03-05T00:00:00+00:00",
+          "params": {
+            "loss_fraction": 0.25
+          }
+        },
+        "changed_rows": 521,
+        "first_changed_ts": "2019-03-01T00:00:00+00:00",
+        "last_changed_ts": "2019-03-04T23:55:00+00:00",
+        "input_rows": 8736,
+        "output_rows": 8736,
+        "changed_metric": "ac_power_kw"
+      }
+    },
+    {
+      "scenario_id": "S2107-F3-0005",
+      "system_id": 2107,
+      "query_window": [
+        "2019-04-23T00:00:00+00:00",
+        "2019-04-30T00:00:00+00:00"
+      ],
+      "device_ids": [
+        "inv05",
+        "inv10",
+        "inv11"
+      ],
+      "poa_device_id": "sensor_149574",
+      "faults": [
+        {
+          "type": "F3",
+          "device_id": "inv05",
+          "start": "2019-04-26T23:45:00+00:00",
+          "end": "2019-04-27T02:45:00+00:00",
+          "params": {
+            "poa_device_id": "sensor_149574",
+            "irradiance_threshold_wm2": 200.0,
+            "alignment": "UTC 15min bin mean; no interpolation"
+          }
+        }
+      ],
+      "difficulty": "easy",
+      "split": "dev",
+      "truth_scope": "injected_faults_only",
+      "baseline_screen": {
+        "schema_version": 1,
+        "system_id": 2107,
+        "window": [
+          "2019-04-23T00:00:00+00:00",
+          "2019-04-30T00:00:00+00:00"
+        ],
+        "poa_device_id": "sensor_149574",
+        "poa_coverage": 1.0,
+        "daylight_bins": 280,
+        "devices": [
+          {
+            "device_id": "inv05",
+            "coverage": 1.0,
+            "daylight_missing_bins": 0,
+            "daylight_near_zero_bins": 0,
+            "negative_power_bins": 0,
+            "daylight_uncomparable_bins": 0,
+            "daylight_peer_outlier_bins": 0,
+            "empirical_p95_kw": 29.91941666666667,
+            "eligible": true
+          },
+          {
+            "device_id": "inv10",
+            "coverage": 1.0,
+            "daylight_missing_bins": 0,
+            "daylight_near_zero_bins": 0,
+            "negative_power_bins": 0,
+            "daylight_uncomparable_bins": 0,
+            "daylight_peer_outlier_bins": 0,
+            "empirical_p95_kw": 29.923516666666664,
+            "eligible": true
+          },
+          {
+            "device_id": "inv11",
+            "coverage": 1.0,
+            "daylight_missing_bins": 0,
+            "daylight_near_zero_bins": 0,
+            "negative_power_bins": 0,
+            "daylight_uncomparable_bins": 0,
+            "daylight_peer_outlier_bins": 0,
+            "empirical_p95_kw": 29.926466666666666,
+            "eligible": true
+          }
+        ],
+        "eligible_devices": [
+          "inv05",
+          "inv10",
+          "inv11"
+        ],
+        "status": "screened_not_manually_verified",
+        "screening_version": "m1-v1",
+        "thresholds": {
+          "daylight_wm2": 200.0,
+          "coverage": 0.99,
+          "minimum_daylight_bins": 16,
+          "near_zero_kw": 0.1,
+          "peer_ratio": [
+            0.85,
+            1.2
+          ],
+          "minimum_valid_peers": 2
+        },
+        "limitations": "Heuristic screening may miss persistent faults; no normal ground truth."
+      },
+      "injection": {
+        "fault": {
+          "type": "F3",
+          "device_id": "inv05",
+          "start": "2019-04-26T23:45:00+00:00",
+          "end": "2019-04-27T02:45:00+00:00",
+          "params": {
+            "poa_device_id": "sensor_149574",
+            "irradiance_threshold_wm2": 200.0,
+            "alignment": "UTC 15min bin mean; no interpolation"
+          }
+        },
+        "changed_rows": 18,
+        "first_changed_ts": "2019-04-26T23:45:00+00:00",
+        "last_changed_ts": "2019-04-27T01:10:00+00:00",
+        "input_rows": 8736,
+        "output_rows": 8736,
+        "changed_metric": "ac_power_kw"
+      }
+    },
+    {
+      "scenario_id": "S2107-F4-0005",
+      "system_id": 2107,
+      "query_window": [
+        "2019-04-23T00:00:00+00:00",
+        "2019-04-30T00:00:00+00:00"
+      ],
+      "device_ids": [
+        "inv05",
+        "inv10",
+        "inv11"
+      ],
+      "poa_device_id": "sensor_149574",
+      "faults": [
+        {
+          "type": "F4",
+          "device_id": "inv10",
+          "start": "2019-04-26T00:00:00+00:00",
+          "end": "2019-04-30T00:00:00+00:00",
+          "params": {
+            "loss_fraction": 0.125
+          }
+        }
+      ],
+      "difficulty": "easy",
+      "split": "dev",
+      "truth_scope": "injected_faults_only",
+      "baseline_screen": {
+        "schema_version": 1,
+        "system_id": 2107,
+        "window": [
+          "2019-04-23T00:00:00+00:00",
+          "2019-04-30T00:00:00+00:00"
+        ],
+        "poa_device_id": "sensor_149574",
+        "poa_coverage": 1.0,
+        "daylight_bins": 280,
+        "devices": [
+          {
+            "device_id": "inv05",
+            "coverage": 1.0,
+            "daylight_missing_bins": 0,
+            "daylight_near_zero_bins": 0,
+            "negative_power_bins": 0,
+            "daylight_uncomparable_bins": 0,
+            "daylight_peer_outlier_bins": 0,
+            "empirical_p95_kw": 29.91941666666667,
+            "eligible": true
+          },
+          {
+            "device_id": "inv10",
+            "coverage": 1.0,
+            "daylight_missing_bins": 0,
+            "daylight_near_zero_bins": 0,
+            "negative_power_bins": 0,
+            "daylight_uncomparable_bins": 0,
+            "daylight_peer_outlier_bins": 0,
+            "empirical_p95_kw": 29.923516666666664,
+            "eligible": true
+          },
+          {
+            "device_id": "inv11",
+            "coverage": 1.0,
+            "daylight_missing_bins": 0,
+            "daylight_near_zero_bins": 0,
+            "negative_power_bins": 0,
+            "daylight_uncomparable_bins": 0,
+            "daylight_peer_outlier_bins": 0,
+            "empirical_p95_kw": 29.926466666666666,
+            "eligible": true
+          }
+        ],
+        "eligible_devices": [
+          "inv05",
+          "inv10",
+          "inv11"
+        ],
+        "status": "screened_not_manually_verified",
+        "screening_version": "m1-v1",
+        "thresholds": {
+          "daylight_wm2": 200.0,
+          "coverage": 0.99,
+          "minimum_daylight_bins": 16,
+          "near_zero_kw": 0.1,
+          "peer_ratio": [
+            0.85,
+            1.2
+          ],
+          "minimum_valid_peers": 2
+        },
+        "limitations": "Heuristic screening may miss persistent faults; no normal ground truth."
+      },
+      "injection": {
+        "fault": {
+          "type": "F4",
+          "device_id": "inv10",
+          "start": "2019-04-26T00:00:00+00:00",
+          "end": "2019-04-30T00:00:00+00:00",
+          "params": {
+            "loss_fraction": 0.125
+          }
+        },
+        "changed_rows": 651,
+        "first_changed_ts": "2019-04-26T00:00:00+00:00",
+        "last_changed_ts": "2019-04-29T23:55:00+00:00",
+        "input_rows": 8736,
+        "output_rows": 8736,
+        "changed_metric": "ac_power_kw"
+      }
+    }
+  ]
+}

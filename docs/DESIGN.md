@@ -1,6 +1,6 @@
 # PV Diagnosis Agent · 设计文档
 
-> 版本：v0.1（2026-10-24）· 进度更新：2026-10-25，M1 数据标准化与数据卡已实跑，诊断主流程尚未实现
+> 版本：v0.1（2026-10-24）· 进度更新：2026-10-25，M1 数据准备、F3/F4 注入与 10 场景生成已实跑，诊断主流程尚未实现
 > 一句话：基于 LangGraph + MCP 的光伏电站时序故障诊断 Agent，在注入已知故障的公开数据上做可复现评测，并用固定评分器驱动 harness 自进化。
 
 ---
@@ -429,7 +429,8 @@ pv-diagnosis-agent/
 | 工程与下载 | 现有 Python 3.11 / uv 配置、匿名 S3 下载器；下载器原有 4 个测试通过。开始本轮时，这些文件尚未提交，本轮保留其工作区状态 |
 | 标准化与数据卡 | 新增 `normalize.py`、`datacard.py`；修正 `.gitignore`，只忽略仓库根目录 `/data/`，避免漏掉数据处理源码 |
 | 2107 实际数据验证 | 原始 electrical、irradiance、environment、meter 四份 CSV；筛选 UTC `[2019-01-01, 2021-01-01)`，生成 **5,383,405** 条长表记录、24 台逆变器及电表/气象测点 |
-| M1 剩余工作 | F3 / F4 故障注入、场景真值、pv-data / pv-analytics、LangGraph 主流程、固定评分器和 10 场景冒烟评测 |
+| 基线筛查与模拟 | 已实现缺测/日间零值/同站离群筛查、F3/F4 注入、场景真值及数据划分隔离校验；已生成 F3/F4 各 5 个开发冒烟场景，逐个验证落盘结果 |
+| M1 剩余工作 | pv-data / pv-analytics、LangGraph 主流程、固定评分器和 10 场景端到端诊断评测；现有 10 场景只完成了生成与注入验证 |
 | M2–M4 | 尚未实现；没有可报告的诊断准确率或消融结果 |
 
 ### 数据核验结论与处理边界
@@ -455,3 +456,26 @@ pv-diagnosis-agent/
 ```
 
 产物为 `data/clean/2107.parquet`、`2107_normalization.json`、`2107_card.json`。默认仅选择 `*data.csv`；显式选择其他来源时可重复传入 `--pattern`，时区经核实后可用 `--source-timezone` 覆盖。
+
+### 基线筛查与 F3/F4 开发场景
+
+- 新增 `src/pvdiag/sim/baseline.py`、`faults.py`、`scenarios.py` 和模拟测试；没有新增依赖。
+- 在 2019 年实测数据中，POA >200 W/m² 的 15 分钟 bin 共 **11,549** 个；其中 `inv04` 有 **2,128** 个 AC ≤0.1 kW 的 bin，`inv08` 有 **2,270** 个。这里只标为异常候选，不声称已确定真实根因。严格全年筛查没有设备通过，因此不能直接把全年当成正常真值。
+- 筛查以 UTC 15 分钟均值对齐，不插补；要求 POA 和目标设备覆盖率 ≥99%、高辐照 bin ≥16、日间无缺测/近零功率，且按经验 P95 功率归一化后的独立同站中位数比值始终在 `[0.85, 1.20]` 内。P95 不是额定容量；恒定的既有损失仍可能漏检。
+- 从 **2019 年上半年、inv01–inv12** 的开发范围扫描不重叠的 7 天窗口，选取并再次筛查三台设备组成的队列；每个窗口分别生成 F3、F4 单故障场景。观测文件只含该队列的 AC 功率、指定 POA、环境温度和队列内组件温度，不暴露未选设备或不一致的原站电表总功率。
+- F3：在 `[start, end)` 内，同一 UTC 15 分钟 bin 的指定 POA 均值严格 >200 W/m² 时，把目标 AC 功率置零；POA 缺测则报错。F4：目标 AC 功率阶跃乘以 `1−1/8` 或 `1−1/4`。NaN 保留，输入不修改，不模拟 DC 和电气动态；无实际变化的注入会被拒绝。
+- 场景真值在 `bench/m1_smoke.json`；每个场景的 `timeseries.parquet`、`truth.json`、`audit.json` 在忽略的 `data/scenarios/<scenario_id>/` 下。诊断端只能读取观测文件，不能读取真值、基线筛查统计或注入审计。
+- 清单记录源 Parquet 的 SHA-256、筛查版本和阈值。本次 10 个场景已独立核对字段、设备/时间范围、注入公式与变化行数；在临时目录重新生成后，清单和全部 10 份 Parquet 的 SHA-256 一致。现有 **40 个测试通过**，Ruff 检查通过。
+- **这些只是开发冒烟数据，真值仅覆盖注入故障**：`truth_scope=injected_faults_only`、`baseline_screen.status=screened_not_manually_verified`。没有生成 N 正常标签，没有运行诊断评分或留出集评测。完整基准集前仍需审核基线，不能据此报告正常误报率。
+- 划分校验同时检查开发/留出集的查询时间与全部可见逆变器（包括对照设备）不相交；跨站系统不能混入同站开发/留出集。本轮清单全部为 `dev`，尚未生成留出集。
+
+复现本次 10 个场景：
+
+```bash
+.venv/bin/python -m pvdiag.sim.scenarios 2107 \
+  --start 2019-01-01 --end 2019-07-01 \
+  --devices inv01 inv02 inv03 inv04 inv05 inv06 inv07 inv08 inv09 inv10 inv11 inv12 \
+  --poa-device sensor_149574
+```
+
+单独筛查可用 `python -m pvdiag.sim.baseline 2107 --start ... --end ... --devices ... --poa-device sensor_149574`，报告写入本地 `data/clean/2107_baseline_screen.json`。下一步实现 pv-data 和 pv-analytics 的只读数据访问与核心分析工具，再接 LangGraph 和固定评分器。
