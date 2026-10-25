@@ -1,6 +1,6 @@
 # PV Diagnosis Agent · 设计文档
 
-> 版本：v0.1（2026-10-24）· 进度更新：2026-10-26，规则诊断、BGE 检索、PostgresSaver 与 FastAPI/SSE/身份绑定审批已验证；Gradio、Ragas/完整 A3 尚未完成，DeepSeek 单例已授权但缺本机凭据
+> 版本：v0.1（2026-10-24）· 进度更新：2026-10-26，规则诊断、BGE 检索、PostgresSaver、FastAPI/SSE/身份绑定审批与 Gradio 单页已验证；Ragas/完整 A3 尚未完成，DeepSeek 单例已授权但缺本机凭据
 > 一句话：基于 LangGraph + MCP 的光伏电站时序故障诊断 Agent，在注入已知故障的公开数据上做可复现评测，并用固定评分器驱动 harness 自进化。
 
 ---
@@ -323,7 +323,7 @@ START → guard_in → recall_memory → plan → investigate(并行工具调用
   - `POST /runs/{id}/approve`：审批写操作
   - `GET /runs/{id}`：查询运行详情
 - **实现状态（2026-10-26）**：FastAPI 已加入 `GET /profiles`、`GET /runs/{id}/events` 与 `POST /runs/{id}/resume`，使用服务端数据白名单、开发 Bearer 身份、角色与归属检查，支持持久 SSE 重放和审批先落库。配置和使用方法见 §17 末节；尚未公开部署。
-- **前端（待实现）**：Gradio 单页，包括诊断输入、流式过程、证据图表和审批按钮。
+- **前端（2026-10-26 已实现本机开发版）**：Gradio 单页接入诊断输入、节点流式过程、UTC 证据图表与身份绑定审批；独立 UI 虚拟环境通过 HTTP 连接 API，配置与验证见 §17 末节。
 - **MCP 独立运行**：每个 Server 都可以单独通过 stdio 启动，在 Claude Desktop 中配置后直接调用（作为演示）。
 - **Docker Compose**：包含 app、postgres（带 pgvector）和 3 个 MCP Server。
 
@@ -344,11 +344,11 @@ pv-diagnosis-agent/
 │   ├── memory/               # base.py · pgvector_store.py · openviking_store.py
 │   ├── evolve/               # propose.py · probe.py · compose.py
 │   ├── eval/                 # scorer.py（固定）· judge.py · run_bench.py · ablations.py
-│   └── api/                  # FastAPI + SSE
+│   ├── api/                  # FastAPI + SSE
+│   └── ui/                   # Gradio HTTP 客户端，独立虚拟环境
 ├── harness/                  # system_prompt.md · playbooks/*.md · tool_descriptions.yaml
 ├── kb/                       # 知识库语料 + SOURCES.md
 ├── bench/                    # 场景 JSON（由脚本生成，可以入库）
-├── ui/                       # Gradio
 ├── tests/
 └── docker-compose.yml
 ```
@@ -437,9 +437,9 @@ pv-diagnosis-agent/
 | M1 剩余工作 | DeepSeek 真实单场景验证及 10 场景 Agent 评测；当前 B0 数字不代表 LLM 成绩。后续还需可核实的物理参数与更完整的基线审核 |
 | 人工审批与模拟工单 | `interrupt` / `Command(resume=...)` 和本地 CLI 已接通；工单默认关闭，SQLite 持久化具体草案、人工决定和幂等工单，拒绝/篡改/重放路径已测试 |
 | 诊断持久化 | 已接真实 AsyncPostgresSaver、显式 schema 初始化、start/resume/show CLI、版本/数据绑定、活动锁及独立模型预算账本；受控审批已在不同 Python 进程间恢复，实际 M1 十场景保存/重开结果一致 |
-| 服务化 | FastAPI/SSE、服务端 profile 白名单、开发身份/角色、请求归属、幂等诊断、持久事件重放及身份绑定审批已验证；默认仅监听本机，尚无 Gradio 或生产身份系统 |
+| 服务化 | FastAPI/SSE、服务端 profile 白名单、开发身份/角色、请求归属、幂等诊断、持久事件重放及身份绑定审批已验证；默认仅监听本机，Gradio 接入见下节，尚无生产身份系统 |
 | M2 | 六类原语、短窗候选、领域核验、混合检索、审批及检查点/API 恢复已实现；正式正常/留出基准集、Ragas、Langfuse 与完整 LLM 消融尚未完成 |
-| M3–M4 | 尚未实现；没有进化、泛化或完整消融结果 |
+| M3–M4 | M4 的 Gradio 本机单页已接通；长期记忆、自进化、Docker Compose、README 和完整演示打包仍未完成，没有进化、泛化或完整消融结果 |
 
 ### 数据核验结论与处理边界
 
@@ -749,4 +749,30 @@ uv pip install --python .venv/bin/python -r requirements/persistence-macos-arm64
 
 真实 M1 `S2107-F3-0001` 使用示例 profile 完成 ASGI HTTP 冒烟：返回 16 个节点事件和最终报告，八次只读工具调用；根因、设备和时间 IoU 检查通过，同 key 重试保持同 run，服务重开后的结果与事件重放一致。收据在 `data/runs/m1_api_smoke.json`。该运行是 B0，零模型调用、工单关闭；真实 TCP 断线行为由上述独立受控测试验证，不把两者混同为真实 LLM 或公开服务成绩。
 
-Gradio、Ragas、Langfuse、长期记忆、自进化及正式正常/留出基准和完整 LLM 消融仍待推进。2026-10-26 复查本机仍无 `.env` 或 `DEEPSEEK_API_KEY`，未发起真实模型请求，单场景授权未消耗。
+Gradio 后续实现见下节；Ragas、Langfuse、长期记忆、自进化及正式正常/留出基准和完整 LLM 消融仍待推进。2026-10-26 复查本机仍无 `.env` 或 `DEEPSEEK_API_KEY`，未发起真实模型请求，单场景授权未消耗。
+
+
+### Gradio 单页与 API 客户端（2026-10-26）
+
+- 新增 `src/pvdiag/ui/`：浏览器分别选择可见数据配置、设备、带时区的诊断窗口和问题，默认值来自认证后的 `GET /profiles`。支持开始/重试、读取运行、重连持久事件及恢复中断运行；刷新页面后可重新填入令牌与运行 ID 读取结果。SSE 节点进度显示在“流式过程”页签，界面最多保留最近 200 行，完整持久事件仍在 API 数据库中。清空页面仅准备新请求，不停止后台任务。
+- 客户端为同一浏览器会话中的同一组输入保留幂等键，**在 HTTP 请求发出前**保存到会话状态，网络失败后的重试仍复用该键。变更输入或显式清空后再开始才创建新请求。客户端同时处理 SSE、恢复/重复审批返回的 JSON，以及已读到最后事件的 204；重连携带相应游标，拒绝错 run 的事件，不自行重新开始既有诊断。SSE 帧大小上限 4 MiB，拒绝无效/截断帧；连接和错误响应只显示固定的操作提示。
+- “诊断结果”展示摘要、根因/设备/时间窗及完整核验结果；“证据图表”按具体证据 ID 展示 `get_timeseries` 采样点与 `peer_compare` 日间低值占比，并可核对原始证据、查询窗口、采样/截断标记。时序图使用 Plotly 日期轴，数据和 tooltip 均显式使用 UTC 字符串，保留证据点的 UTC 时间，避免浏览器本地时区导致故障时间偏移；图表标注实际指标单位，不补造缺失采样点。界面为窄屏顺序布局，表格可独立滚动。
+- 审批区展示完整的 `PendingAction`（草案内容、证据、run ID、动作 ID 和内容摘要），确认框默认未勾选；批准和拒绝均须人工勾选确认。提交绑定**已展示的草案快照**，不使用可编辑的运行 ID 文本框替换审批目标，也不允许填写审批人。审批身份通过当前 API 令牌确定，后端仍独立核验角色、范围、内容摘要和既有决定。被拒绝或失败的请求可重新读取运行后处理，UI 不绕过 API 直接操作工单台账。
+- API 地址仅由启动 CLI 指定，不提供浏览器 URL 输入；只接受无嵌入凭据/查询串的本机 HTTP origin 或 HTTPS origin，禁用重定向和环境代理。令牌由每个浏览器会话的密码框传入，不写入 Gradio 状态、诊断请求、收据或服务端共享身份；关闭 Gradio analytics、run history、公开分享及公共回调 API 展示。UI 默认固定监听 `127.0.0.1`，这是开发界面，尚非公开部署或企业认证系统。
+- 页面实测发现并修复 API 的窗口边界：观测可能为五分钟采样，原先 `max(ts)+15min` 会返回 `00:10` 等无效默认结束时间。现在开始时间向上对齐十五分钟，结束时间使用最后一个十五分钟 bin 的右边界；`Profile.validate` 与公开范围一致，并增加非整刻原始数据的回归检查。
+
+**独立环境启动**：Gradio **6.30.0** 需要的 Hugging Face Hub 版本与现有 Transformers/BGE 固定环境不兼容，因此 UI 锁文件独立于 API/知识依赖，不在 `.venv` 中安装。诊断环境的 Hub **0.36.2** 和 Pillow **13.0.0** 已恢复；两个环境的依赖兼容检查均通过。UI 使用 Gradio 6.30.0、Plotly 6.9.0，macOS arm64 / Python 3.11 完成实测，其他平台未验证。先按上一节启动 API，再在仓库根目录另开终端：
+
+```bash
+uv venv .venv-ui --python .venv/bin/python
+uv pip install --python .venv-ui/bin/python -r requirements/ui-macos-arm64.txt
+PYTHONPATH=src .venv-ui/bin/python -m pvdiag.ui --api-url http://127.0.0.1:8000
+```
+
+访问 `http://127.0.0.1:7860`，填入既有 API 身份的原 token，再点击“连接并读取配置”。UI 不需要数据库连接、模型凭据或观测路径；这些仍由 API 管理。诊断拥有者和审批者可分别用自己的令牌读取同一 run。默认示例是 B0、工单关闭，不产生外部模型费用；LLM profile 的启用和收费授权仍遵循既有边界。
+
+**验证结果**：全套 **206 个测试通过**。新增九个检查覆盖 SSE 多行/UTF-8/心跳/截断/超量事件、错误脱敏与拒绝重定向、失败后的同键重试、会话隔离、游标和 JSON/204 恢复、已展示草案绑定与显式确认、证据点/缺失值/UTC 保留、输入及范围对齐，以及真实 PostgreSQL/FastAPI 下的请求归属、审批身份和幂等恢复；后续图表时区修改后，相关 UI/API **17 项检查再次通过**。
+
+真实浏览器还完成了 M1 `S2107-F3-0001` 的 B0 页面诊断、刷新后读取和证据图表检查：八次只读工具调用，根因、设备与时间 IoU 检查通过，工单关闭，零模型调用。另在独立的受控合成 F3 profile 中核对待审草案，验证未确认不提交、使用受控审批身份确认后仅生成一张本地测试工单；没有替真实 M1 场景批准工单。原始收据为 `data/runs/gradio_browser_smoke.json`，实际页面截图为 `data/runs/gradio_evidence.png` 与 `data/runs/gradio_peer_evidence.png`。两类图表均在浏览器中核对，时序图使用 UTC 日期轴，同站对比使用连续的百分比数值轴；临时服务和数据库在验证后停止。
+
+下一步仍为正式正常/留出基准、Ragas/Langfuse、真实 LLM 单例、长期记忆及自进化等；没有因此取得完整 A3 或正式泛化成绩。DeepSeek 本机凭据仍未配置，既有单场景授权未消耗。

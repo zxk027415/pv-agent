@@ -102,22 +102,29 @@ class Profile:
     def reasoner(self):
         return self._factory()
 
+    def bounds(self):
+        timestamps = self.observations.frame.ts
+        return timestamps.min().ceil("15min"), timestamps.max().floor("15min") + timedelta(
+            minutes=15
+        )
+
     def validate(self, request):
-        frame = self.observations.frame
+        start, end = self.bounds()
         if request.system_id != self.observations.system_id or not set(request.device_ids) <= set(
             self.config.allowed_device_ids
         ):
             raise ValueError("diagnosis request is outside profile scope")
-        if request.start < frame.ts.min() or request.end > frame.ts.max() + timedelta(minutes=15):
+        if request.start < start or request.end > end:
             raise ValueError("diagnosis window is outside profile scope")
 
     def public(self):
+        start, end = self.bounds()
         return {
             "profile_id": self.config.profile_id,
             "system_id": self.observations.system_id,
             "device_ids": self.config.allowed_device_ids,
-            "start": self.observations.frame.ts.min().isoformat(),
-            "end": (self.observations.frame.ts.max() + timedelta(minutes=15)).isoformat(),
+            "start": start.isoformat(),
+            "end": end.isoformat(),
             "mode": self.config.mode,
             "max_model_calls": self.config.max_model_calls if self.config.mode == "llm" else 0,
             "work_orders_enabled": self.ops is not None,

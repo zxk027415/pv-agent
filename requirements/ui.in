@@ -1,0 +1,5 @@
+# Run in a separate .venv-ui: Gradio's Hub dependency conflicts with pinned BGE.
+gradio==6.30.0
+httpx[socks]==0.28.1
+pandas==3.1.0
+plotly==6.9.0
