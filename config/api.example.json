@@ -1,0 +1,13 @@
+[
+  {
+    "profile_id": "dev-2107",
+    "observations": "data/scenarios/S2107-F3-0001/timeseries.parquet",
+    "metadata": "data/raw/2107/metadata/2107_system_metadata.json",
+    "allowed_device_ids": ["inv03", "inv04", "inv05"],
+    "mode": "b0",
+    "verification": "domain",
+    "knowledge_root": "kb",
+    "retrieval_mode": "bm25",
+    "ops_db": null
+  }
+]

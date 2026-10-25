@@ -62,6 +62,7 @@ async def open_runtime(
     max_calls=30,
     max_loops=3,
     verification_mode="structural",
+    event_sink=None,
 ):
     async with AsyncExitStack() as stack:
         reader = await stack.enter_async_context(
@@ -129,13 +130,34 @@ async def open_runtime(
             "packages": packages,
             "python_version": platform.python_version(),
         }
-        yield DiagnosisRuntime(graph, reasoner, contract, persistence)
+        yield DiagnosisRuntime(graph, reasoner, contract, persistence, event_sink)
 
 
 class DiagnosisRuntime:
-    def __init__(self, graph, reasoner, contract, persistence):
+    def __init__(self, graph, reasoner, contract, persistence, event_sink=None):
         self.graph, self.reasoner = graph, reasoner
         self.contract, self.persistence = contract, persistence
+        self.event_sink = event_sink
+
+    async def _execute(self, command, config):
+        if self.event_sink is None:
+            await self.graph.ainvoke(command, config=config, durability="sync")
+            return
+        async for update in self.graph.astream(
+            command, config=config, stream_mode="updates", durability="sync"
+        ):
+            for node, values in update.items():
+                if node == "__interrupt__":
+                    continue
+                event = {"node": node}
+                if isinstance(values, dict):
+                    if "loops" in values:
+                        event["loops"] = values["loops"]
+                    if "verdict" in values:
+                        event["report_status"] = values["verdict"].status
+                    if "trace" in values:
+                        event["tool_calls"] = len(values["trace"])
+                await self.event_sink("node", event)
 
     @staticmethod
     def config(run_id):
@@ -177,7 +199,7 @@ class DiagnosisRuntime:
                 self.reasoner.max_model_calls if self.reasoner.metadata.get("mode") == "LLM" else 0,
             )
             await self._accounting(run_id)
-            await self.graph.ainvoke({"request": request}, config=config, durability="sync")
+            await self._execute({"request": request}, config)
             return await self.view(run_id)
 
     async def resume(self, run_id, decision=None):
@@ -207,5 +229,5 @@ class DiagnosisRuntime:
                 command = None
             else:
                 command = {"request": DiagRequest.model_validate(run["request"])}
-            await self.graph.ainvoke(command, config=config, durability="sync")
+            await self._execute(command, config)
             return await self.view(run_id)

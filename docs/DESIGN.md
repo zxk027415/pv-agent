@@ -1,6 +1,6 @@
 # PV Diagnosis Agent · 设计文档
 
-> 版本：v0.1（2026-10-24）· 进度更新：2026-10-25，规则诊断、BGE 检索、本地审批及 PostgresSaver 跨进程恢复已验证；Ragas/完整 A3 尚未评测，DeepSeek 单例已授权但缺本机凭据
+> 版本：v0.1（2026-10-24）· 进度更新：2026-10-26，规则诊断、BGE 检索、PostgresSaver 与 FastAPI/SSE/身份绑定审批已验证；Gradio、Ragas/完整 A3 尚未完成，DeepSeek 单例已授权但缺本机凭据
 > 一句话：基于 LangGraph + MCP 的光伏电站时序故障诊断 Agent，在注入已知故障的公开数据上做可复现评测，并用固定评分器驱动 harness 自进化。
 
 ---
@@ -322,7 +322,8 @@ START → guard_in → recall_memory → plan → investigate(并行工具调用
   - `POST /diagnose`：通过 SSE 流式返回各节点的进度和最终报告
   - `POST /runs/{id}/approve`：审批写操作
   - `GET /runs/{id}`：查询运行详情
-- **前端**：Gradio 单页，包括诊断输入、流式过程、证据图表和审批按钮。
+- **实现状态（2026-10-26）**：FastAPI 已加入 `GET /profiles`、`GET /runs/{id}/events` 与 `POST /runs/{id}/resume`，使用服务端数据白名单、开发 Bearer 身份、角色与归属检查，支持持久 SSE 重放和审批先落库。配置和使用方法见 §17 末节；尚未公开部署。
+- **前端（待实现）**：Gradio 单页，包括诊断输入、流式过程、证据图表和审批按钮。
 - **MCP 独立运行**：每个 Server 都可以单独通过 stdio 启动，在 Claude Desktop 中配置后直接调用（作为演示）。
 - **Docker Compose**：包含 app、postgres（带 pgvector）和 3 个 MCP Server。
 
@@ -420,7 +421,7 @@ pv-diagnosis-agent/
 
 ---
 
-## 17. 开发记录（2026-10-25）
+## 17. 开发记录（更新至 2026-10-26）
 
 ### 当前进度
 
@@ -436,7 +437,8 @@ pv-diagnosis-agent/
 | M1 剩余工作 | DeepSeek 真实单场景验证及 10 场景 Agent 评测；当前 B0 数字不代表 LLM 成绩。后续还需可核实的物理参数与更完整的基线审核 |
 | 人工审批与模拟工单 | `interrupt` / `Command(resume=...)` 和本地 CLI 已接通；工单默认关闭，SQLite 持久化具体草案、人工决定和幂等工单，拒绝/篡改/重放路径已测试 |
 | 诊断持久化 | 已接真实 AsyncPostgresSaver、显式 schema 初始化、start/resume/show CLI、版本/数据绑定、活动锁及独立模型预算账本；受控审批已在不同 Python 进程间恢复，实际 M1 十场景保存/重开结果一致 |
-| M2 | 六类原语、短窗候选、领域核验、混合检索、本地审批及检查点恢复已实现；正式基准集、Ragas、远程审批/API 身份边界与 LLM 消融尚未完成 |
+| 服务化 | FastAPI/SSE、服务端 profile 白名单、开发身份/角色、请求归属、幂等诊断、持久事件重放及身份绑定审批已验证；默认仅监听本机，尚无 Gradio 或生产身份系统 |
+| M2 | 六类原语、短窗候选、领域核验、混合检索、审批及检查点/API 恢复已实现；正式正常/留出基准集、Ragas、Langfuse 与完整 LLM 消融尚未完成 |
 | M3–M4 | 尚未实现；没有进化、泛化或完整消融结果 |
 
 ### 数据核验结论与处理边界
@@ -519,7 +521,7 @@ pv-diagnosis-agent/
 - LangGraph **1.2.17**、LangChain **1.4.7**、langchain-openai **1.7.2** 已安装。**验证出的兼容性差异**：PyPI 最新 langchain-mcp-adapters **0.3.2** 要求 `mcp>=1.24,<2`，FastMCP **4.1.3** 要求 `mcp>=2.2,<3`，uv 无法同时解析。当前使用 FastMCP 原生 Client 连接两个服务，保持 MCP 协议和工具 schema；未强装冲突依赖。
 - 调用前校验节点工具白名单、Pydantic 参数、系统/设备/传感器和查询/参考时间范围；响应校验 schema、实际请求、稳定 evidence_id 哈希及两台服务的观测快照指纹。模型看不到原始 Parquet、场景 ID、基线筛查结果或注入真值。远端错误只保留类型，不把可能含凭据或路径的异常文本传入报告。
 - 报告采用定性置信度。每条结论要求至少两个不同的非元数据观测工具引用；数值通过 JSON Pointer 精确溯源，时间边界也须对应已有观测证据时间戳。定性摘要/理由禁止自由嵌入数字；结构核验失败会重试或清除不可信结论，返回 needs_review。默认仍为结构核验；可选领域核验和模型自评见后文。**这些检查不等于独立语义忠实度评测，完整混淆因素排除和 Ragas 仍未完成**。
-- 默认单次诊断仍用 InMemorySaver；后续已加入可选 PostgresSaver 跨进程恢复和独立模型预算账本，详见末节。SQLite 保存本地工单及人工决定，PostgreSQL 保存诊断检查点与模型用量，两者职责不同。长期记忆、审批 HTTP API 与服务化仍待开发。
+- 默认单次诊断仍用 InMemorySaver；后续已加入可选 PostgresSaver 跨进程恢复和独立模型预算账本，详见末节。SQLite 保存本地工单及人工决定，PostgreSQL 保存诊断检查点与模型用量，两者职责不同。长期记忆仍待开发；审批 HTTP API 与服务化的后续实现见末节。
 - B0 用纯代码从辐照摘要选择有足够日间点的参考期，再结合同站低值段/高辐照零值段、形态及分期对比生成可溯源假设，仅覆盖当前 F3/F4；其他情况保守输出 inconclusive，不能认定正常。B0 与 LLM reasoner 共享图及工具协议，但运行元数据明确区分模式。
 - DeepSeek 接口通过 `init_chat_model` 和 `with_structured_output(method="function_calling")` 接入，记录实际返回模型名、输入/输出 token 和缺失用量标记。每次输出最多 4096 token、禁用隐式自动重试、请求有超时与载荷字符上限。已完成真实 SDK 的 schema 构造及注入式离线模型测试，**没有发起收费调用**。调用须显式 `--allow-model-calls`；DeepSeek 默认只读取 `DEEPSEEK_API_KEY`，OpenAI 只读取 `OPENAI_API_KEY`，其他端点默认读取 `PVDIAG_LLM_API_KEY`，可用 `--credential-env` 显式指定字段；从环境或忽略的本地 `.env` 加载，不输出、不入库，不自动跨提供方回退。仅凭模型别名仍无法证明正式模型版本固定。
 - 新增 `src/pvdiag/eval/scorer.py`（v1）与 `run_bench.py`。评分器为纯代码并记录源码 SHA-256：场景检测 P/R/F1、根因 Top-1/Top-3、设备定位、根因与设备联合匹配、同设备同根因的时间 IoU 命中、拒答、数值引用、工具成功率和用量。双故障使用最大一一匹配并惩罚多报；根因与设备各自正确但对应错误时联合指标为错。只有正常样本才计算误报率，缺失 token 用量标为未知，不填零；LLM-as-Judge 与价格未接入时保持 null。
@@ -697,3 +699,54 @@ uv pip install --python .venv/bin/python -r requirements/persistence-macos-arm64
 ```
 
 `start` 默认保存待审批动作后返回，`resume --interactive` 才在终端展示具体内容并等待手工决定；`show` 不需要模型凭据或观测路径。恢复须保留对应 SQLite 工单台账和原始输入快照，PostgresSaver 不备份这些外部文件。本轮验证后停止本任务创建的临时数据库；远程审批/API 身份认证、Ragas、长期记忆、正式正常/留出基准及完整消融仍未完成，目标保持推进中。
+
+
+### FastAPI、SSE 与身份绑定审批（2026-10-26）
+
+- 新增 `src/pvdiag/api/` 和 `config/api.example.json`，通过服务端 profile 固定观测快照、设备白名单、知识库、模型模式和可选 SQLite 工单台账。HTTP 客户端只提交 `profile_id` 与 `DiagRequest`，不能指定路径、模型、收费开关或审批人。示例默认 B0、领域核验、BM25，`ops_db: null` 关闭工单。LLM profile 还须服务启动时显式 `--allow-model-calls`，每 run 最多六次调用；**启用服务不自动获得新的收费授权**。
+- 本地开发身份来自 `PVDIAG_API_TOKENS`，只在 `Authorization: Bearer ...` 接收原 token，服务端保存 SHA-256 摘要并做常量时间比较；无默认凭据。每个身份配置 `subject`、`roles`（`diagnose` / `read` / `approve`）和 `profiles`。普通身份仅访问自己在授权 profile 下的 run，审批身份可读取其授权 profile 下的运行；越权 run 返回 404。审批人从认证身份注入，body 中额外的 `reviewer` 会被拒绝。这是开发用身份机制，尚无 OAuth/SSO、TLS 或公开部署。
+- 新增两张 PostgreSQL API 表，分别保存请求归属/幂等绑定和单调编号的 SSE 事件。`POST /diagnose` 必须提供 8–128 位字母、数字、下划线或连字符组成的 `Idempotency-Key`；同身份、同 key、同请求返回同 run，不重新诊断；同 key 不同请求返回 409。运行在独立后台任务中，客户端断线不会取消诊断。默认最多两个活动任务，容量满时新请求返回 429，且不注册第二个 run；这是单进程容量限制，不是全局分布式任务队列。PostgreSQL 活动锁仍约束同 run 的执行。
+- 运行时通过真实 LangGraph `astream(stream_mode="updates", durability="sync")` 发送 `node` 进度，仅含节点名、轮数、工具调用数和临时报告状态；不转发原始节点输出。`accepted`、`node`、`awaiting_approval`、`completed`、`error` 持久化，可在重开服务后重放。事件游标格式为 `<run_id>:<sequence>`，支持 `Last-Event-ID`；错误 run 或超前游标返回 400，已读到最后终止事件返回 204。错误响应不回显输入、数据库连接或提供方异常；CLI 关闭 access log，避免误把 URL 中的敏感信息写入日志。
+- `POST /runs/{id}/approve` 要求 `approve` 角色，并精确匹配展示草案的 `action_id` 与 `payload_sha256`，`approved` 必须是 JSON 布尔值。可信决定**先写入 SQLite，再调度图恢复**；worker 未启动或服务重开后，可从原决定恢复，并保留原审批人。相同决定重试不创建第二张工单，不同决定返回 409。拒绝路径保存决定且创建零工单。应用关闭会取消本服务管理的任务，检查点、预算与已保存决定可恢复；不会自动恢复所有历史中断 run。
+
+**启动与配置**：可选依赖由 `requirements/api.in` 和 macOS arm64 / Python 3.11 锁文件 `requirements/api-macos-arm64.txt` 管理，FastAPI 0.162.0、Uvicorn 0.54.0、Starlette 1.10.0；Linux 未实测。先在环境或忽略的本机 `.env` 配置 `PVDIAG_POSTGRES_DSN` 和 `PVDIAG_API_TOKENS`。身份字段使用如下 JSON 结构，其中摘要由本机生成的高熵 token 计算，不能把占位符直接作为可用配置；原 token 仅留在受信客户端：
+
+```json
+[
+  {
+    "subject": "operator",
+    "token_sha256": "<原 token 的 64 位小写 SHA-256>",
+    "roles": ["diagnose", "read"],
+    "profiles": ["dev-2107"]
+  }
+]
+```
+
+数据库及账号由操作者准备，表初始化是显式操作；`serve` 仅检查既有表，不自动迁移。使用项目虚拟环境：
+
+```bash
+.venv/bin/python -m pvdiag.api init --schema pvdiag
+.venv/bin/python -m pvdiag.api serve --schema pvdiag --profiles config/api.example.json
+```
+
+默认监听 `127.0.0.1:8000`。授权客户端先调用 `GET /profiles` 获取可见窗口/设备，再以 `Authorization`、`Idempotency-Key` 请求头向 `POST /diagnose` 提交：
+
+```json
+{
+  "profile_id": "dev-2107",
+  "request": {
+    "system_id": 2107,
+    "device_ids": ["inv03", "inv04", "inv05"],
+    "start": "2019-01-08T00:00:00Z",
+    "end": "2019-01-15T00:00:00Z"
+  }
+}
+```
+
+响应头 `X-Run-ID` 给出运行 ID，`text/event-stream` 中 `id` 可用于重连。`GET /runs/{id}` 返回 JSON；`GET /runs/{id}/events` 重放事件。`POST /runs/{id}/resume` 仅诊断拥有者可用：执行恢复时返回 SSE，已完成或等待尚未决定的审批时返回 JSON；客户端应检查 `Content-Type`。审批先读取具体草案，再向 `POST /runs/{id}/approve` 提交 `approved`、`action_id`、`payload_sha256` 和可选 `reason`；执行恢复时返回 SSE，完成后相同决定重试返回原 JSON 结果。审批需要服务端显式配置工单台账和审批身份，示例不默认启用。
+
+**本轮验证**：全套 **197 个测试通过**，含八个 API 检查（其中六个使用真实独立 PostgreSQL）和既有七个 PostgreSQL 集成检查。覆盖身份/归属/角色、路径及审批人注入拒绝、幂等冲突、容量限制、游标边界、错误脱敏、审批先落库及重启恢复；真实 Uvicorn/TCP HTTP 测试使用等待屏障确认断线后 worker 仍活动，释放后可重放至待审批。受控审批测试仅操作临时测试台账，没有替真实场景批准工单。评分器保持 v1.2，未修改评分规则。
+
+真实 M1 `S2107-F3-0001` 使用示例 profile 完成 ASGI HTTP 冒烟：返回 16 个节点事件和最终报告，八次只读工具调用；根因、设备和时间 IoU 检查通过，同 key 重试保持同 run，服务重开后的结果与事件重放一致。收据在 `data/runs/m1_api_smoke.json`。该运行是 B0，零模型调用、工单关闭；真实 TCP 断线行为由上述独立受控测试验证，不把两者混同为真实 LLM 或公开服务成绩。
+
+Gradio、Ragas、Langfuse、长期记忆、自进化及正式正常/留出基准和完整 LLM 消融仍待推进。2026-10-26 复查本机仍无 `.env` 或 `DEEPSEEK_API_KEY`，未发起真实模型请求，单场景授权未消耗。
