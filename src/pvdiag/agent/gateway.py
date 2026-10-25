@@ -1,0 +1,146 @@
+"""Native FastMCP gateway: SDK v2 is incompatible with adapters 0.3.2's SDK v1."""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import json
+from contextlib import AsyncExitStack, asynccontextmanager
+from time import perf_counter
+
+from fastmcp import Client
+
+from pvdiag.agent.state import DiagRequest, Scope, ToolCall, ToolTrace
+from pvdiag.mcp_servers.models import (
+    AnomaliesResult,
+    CompareRequest,
+    DetectRequest,
+    DevicesResult,
+    Evidence,
+    ExpectedRequest,
+    ExpectedResult,
+    PatternsResult,
+    PeerRequest,
+    PeersResult,
+    PeriodsResult,
+    QualityRequest,
+    QualityResult,
+    SiteRequest,
+    SiteResult,
+    TimeseriesRequest,
+    TimeseriesResult,
+)
+
+CONTRACTS = {
+    "list_devices": (SiteRequest, DevicesResult),
+    "get_site_info": (SiteRequest, SiteResult),
+    "get_timeseries": (TimeseriesRequest, TimeseriesResult),
+    "data_quality": (QualityRequest, QualityResult),
+    "peer_compare": (PeerRequest, PeersResult),
+    "detect_anomalies": (DetectRequest, AnomaliesResult),
+    "profile_pattern": (PeerRequest, PatternsResult),
+    "compare_periods": (CompareRequest, PeriodsResult),
+    "expected_power": (ExpectedRequest, ExpectedResult),
+}
+BOOTSTRAP = {"list_devices", "get_site_info"}
+INVESTIGATE = set(CONTRACTS) - BOOTSTRAP
+
+
+class MCPGateway:
+    def __init__(self, clients, tools):
+        self.clients = clients
+        self.tools = tools
+
+    @classmethod
+    @asynccontextmanager
+    async def connect(cls, data_transport, analytics_transport):
+        async with AsyncExitStack() as stack:
+            clients, catalog = {}, {}
+            for transport in (data_transport, analytics_transport):
+                client = await stack.enter_async_context(Client(transport, timeout=30))
+                for tool in await client.list_tools():
+                    if tool.name not in CONTRACTS:
+                        continue
+                    if tool.name in clients:
+                        raise ValueError("duplicate MCP tool names")
+                    if not tool.annotations or not tool.annotations.read_only_hint:
+                        raise ValueError("diagnosis requires read-only tools")
+                    if tool.annotations.destructive_hint:
+                        raise ValueError("destructive tool is not allowed")
+                    clients[tool.name] = client
+                    catalog[tool.name] = {
+                        "name": tool.name,
+                        "description": tool.description,
+                        "input_schema": tool.input_schema,
+                    }
+            if set(clients) != set(CONTRACTS):
+                raise ValueError("MCP servers do not expose the required tools")
+            yield cls(clients, catalog)
+
+    async def call(self, call: ToolCall, request: DiagRequest, scope: Scope | None, node: str):
+        start = perf_counter()
+        try:
+            allowed = BOOTSTRAP if node == "guard_in" else INVESTIGATE
+            if call.name not in allowed:
+                raise ValueError("tool is not allowed in this node")
+            input_type, result_type = CONTRACTS[call.name]
+            validated = input_type.model_validate(call.arguments)
+            if validated.system_id != request.system_id:
+                raise ValueError("system outside request scope")
+            if hasattr(validated, "device_ids"):
+                allowed_devices = set(scope.device_ids) | {
+                    scope.poa_device_id,
+                    scope.ambient_device_id,
+                }
+                if not set(validated.device_ids) <= allowed_devices:
+                    raise ValueError("devices outside request scope")
+                if validated.start < request.start or validated.end > request.end:
+                    raise ValueError("window outside request scope")
+                if hasattr(validated, "reference_start") and (
+                    validated.reference_start < request.start
+                    or validated.reference_end > request.end
+                ):
+                    raise ValueError("reference outside request scope")
+                for field in ("poa_device_id", "ambient_device_id"):
+                    if hasattr(validated, field) and getattr(validated, field) != getattr(
+                        scope, field
+                    ):
+                        raise ValueError("sensor outside request scope")
+            response = await asyncio.wait_for(
+                self.clients[call.name].call_tool(
+                    call.name, {"request": validated.model_dump(mode="json")}
+                ),
+                timeout=30,
+            )
+            evidence = (
+                Evidence[result_type]
+                .model_validate(response.structured_content)
+                .model_dump(mode="json")
+            )
+            payload = {key: value for key, value in evidence.items() if key != "evidence_id"}
+            digest = hashlib.sha256(
+                json.dumps(payload, sort_keys=True, allow_nan=False).encode()
+            ).hexdigest()
+            if evidence["evidence_id"] != f"ev_{digest[:24]}" or evidence["tool"] != call.name:
+                raise ValueError("invalid evidence identity")
+            if evidence["request"] != validated.model_dump(mode="json"):
+                raise ValueError("evidence request mismatch")
+            if scope is not None and evidence["source_sha256"] != scope.source_sha256:
+                raise ValueError("MCP servers use different observation snapshots")
+            return evidence, ToolTrace(
+                name=call.name,
+                node=node,
+                success=True,
+                duration_seconds=perf_counter() - start,
+                evidence_id=evidence["evidence_id"],
+            )
+        except Exception as exc:  # noqa: BLE001 -- protocol boundary: sanitize all remote failures
+            # Never copy provider/server exception text (which may contain keys,
+            # paths or response bodies) into model-visible traces.
+            return None, ToolTrace(
+                name=call.name,
+                node=node,
+                success=False,
+                duration_seconds=perf_counter() - start,
+                error=type(exc).__name__,
+            )
