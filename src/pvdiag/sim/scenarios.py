@@ -105,10 +105,11 @@ class Scenario:
 
 
 def validate_split_isolation(scenarios: list[Scenario]) -> None:
-    """Dev/test query dates AND all visible inverter IDs must be disjoint.
+    """Dev/test dates, visible inverter IDs AND all fault targets are disjoint.
 
-    Peer devices count as visible, not just fault targets. Cross-site systems
-    must not appear in either development or same-site held-out sets.
+    Peer inverters count as visible; F5 sensor targets count as studied devices.
+    Weather covariates are not treated as independent evaluated devices unless
+    they are fault targets. Cross-site systems cannot also appear in dev/test.
     """
     if len({s.scenario_id for s in scenarios}) != len(scenarios):
         raise ValueError("duplicate scenario IDs")
@@ -117,8 +118,12 @@ def validate_split_isolation(scenarios: list[Scenario]) -> None:
             continue
         if "cross_site" in {left.split, right.split}:
             raise ValueError("cross-site system is also used in dev/test")
+        left_devices = set(left.device_ids) | {f.device_id for f in left.faults}
+        right_devices = set(right.device_ids) | {f.device_id for f in right.faults}
         if set(left.device_ids) & set(right.device_ids):
             raise ValueError("dev/test visible inverter IDs overlap")
+        if left_devices & right_devices:
+            raise ValueError("dev/test fault target devices overlap")
         a, b = window_bounds(*left.query_window), window_bounds(*right.query_window)
         if max(a[0], b[0]) < min(a[1], b[1]):
             raise ValueError("dev/test query windows overlap")

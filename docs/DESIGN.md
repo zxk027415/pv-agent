@@ -1,6 +1,6 @@
 # PV Diagnosis Agent · 设计文档
 
-> 版本：v0.1（2026-10-24）· 进度更新：2026-10-26，规则诊断、BGE 检索、PostgresSaver、FastAPI/SSE/身份绑定审批与 Gradio 单页已验证；Ragas/完整 A3 尚未完成，DeepSeek 单例已授权但缺本机凭据
+> 版本：v0.1（2026-10-24）· 进度更新：2026-10-26，规则诊断、BGE 检索、PostgresSaver、FastAPI/SSE/身份绑定审批与 Gradio 单页已验证；已补基线审核和六类 B0 开发评测，Ragas/完整 A3 尚未完成，DeepSeek 单例已授权但缺本机凭据
 > 一句话：基于 LangGraph + MCP 的光伏电站时序故障诊断 Agent，在注入已知故障的公开数据上做可复现评测，并用固定评分器驱动 harness 自进化。
 
 ---
@@ -279,8 +279,10 @@ START → guard_in → recall_memory → plan → investigate(并行工具调用
 | 集合 | 组成 | 用途 |
 |---|---|---|
 | 开发集 | 2107 · 6 类 × 10 + 正常 20 = 80 个场景 | 调试与自进化 |
-| 留出集 | 2107 · 6 类 × 10 + 正常 20 = 80 个场景（时间和设备都与开发集不相交） | 报告主指标 |
+| 留出集 | 2107 · 6 类 × 10 + 正常 20 = 80 个场景（时间、全部可见逆变器和故障目标均与开发集不相交） | 报告主指标 |
 | 跨站集 | 9069 · 6 类 × 5 + 正常 10 = 40 个场景 | 泛化 |
+
+**设备隔离补充（2026-10-26，用户已明确）**：严格隔离包含 F5 的 POA 故障目标；逆变器对照设备也计入隔离范围。非故障目标的气象共变量作为观测上下文，不据此声称传感器跨设备泛化。当前 2107 仅有 `sensor_149574` 一个 POA 通道，因此 F5 留出集等待独立传感器数据，不以共享 POA 的跨时间测试替代跨设备结论。
 
 ### 9.2 指标（评分器为纯代码，固定）
 
@@ -404,6 +406,7 @@ pv-diagnosis-agent/
 1. **默认 LLM 已选 DeepSeek**（2026-10-25）：OpenAI 兼容接口、function calling；用户已授权一个开发场景、最多 6 次模型调用、每次最多 4096 输出 token。当前仅缺本机安全凭据，尚未消耗授权；试跑后仍需核实可固定的实际模型版本。扩大评测范围需另行授权。
 2. **Langfuse**：用 Cloud 免费档还是自托管？默认 Cloud。
 3. **是否公开仓库**：建议 M2 完成后公开，届时检查 `.gitignore` 和 kb 语料的许可证。
+4. **F5 留出设备隔离已确认**（2026-10-26）：保持严格故障目标隔离，等待补齐独立 POA 传感器数据；当前不生成或报告 F5 跨设备留出成绩。
 
 ---
 
@@ -430,9 +433,9 @@ pv-diagnosis-agent/
 | 工程与下载 | 现有 Python 3.11 / uv 配置、匿名 S3 下载器；下载器原有 4 个测试通过。开始本轮时，这些文件尚未提交，本轮保留其工作区状态 |
 | 标准化与数据卡 | 新增 `normalize.py`、`datacard.py`；修正 `.gitignore`，只忽略仓库根目录 `/data/`，避免漏掉数据处理源码 |
 | 2107 实际数据验证 | 原始 electrical、irradiance、environment、meter 四份 CSV；筛选 UTC `[2019-01-01, 2021-01-01)`，生成 **5,383,405** 条长表记录、24 台逆变器及电表/气象测点 |
-| 基线筛查与模拟 | 已实现缺测/日间零值/同站离群筛查、六类注入及双故障、真值与数据划分隔离校验；已生成 10 个 M1 冒烟场景及 80 个 M2 短窗开发候选，未注入候选不能作为正常真值 |
+| 基线筛查与模拟 | 六类注入及双故障、真值与数据划分校验已实现，划分现在包含 F5 传感器目标；80 个 M2 候选已逐个重建核对并绑定 20 份原始基线审核包，实际人工接受数仍为零，未注入候选不能作为正常真值 |
 | 只读 MCP 工具 | pv-data 4 个工具、pv-analytics 5 个工具均已接入 FastMCP / Pydantic；stdio、Streamable HTTP 实测通过；真实场景完成 90 次工具协议调用。2107 缺少可核实的单机物理参数，expected_power 返回 unavailable |
-| 诊断图与评分器 | 已接 LangGraph、有界 MCP 取证、结构/领域核验及离线自评接口；评分器 v1.2 新增知识只读分类和审批记录一致性检查，B0 十场景仍为根因/定位 10/10、时间窗 9/10 |
+| 诊断图与评分器 | 已接 LangGraph、有界 MCP 取证、结构/领域核验及离线自评接口；评分器 v1.2 新增知识只读分类和审批记录一致性检查，B0 的 M1 十场景仍为根因/定位 10/10、时间窗 9/10；M2 六类故障开发子集根因/定位 17/60、时间窗 16/60，规则仍仅覆盖 F3/F4 |
 | 知识库 | 已核对许可并收录 5 份 pvlib 文档、6 份项目 Playbook；两项 MCP 工具、可选图接入和 30 题 BM25/BGE 对比已实跑。混合检索文档 Recall@3 为 1.0、MRR 为 0.9833；自编标签、不是 Ragas 或 A3 成绩 |
 | M1 剩余工作 | DeepSeek 真实单场景验证及 10 场景 Agent 评测；当前 B0 数字不代表 LLM 成绩。后续还需可核实的物理参数与更完整的基线审核 |
 | 人工审批与模拟工单 | `interrupt` / `Command(resume=...)` 和本地 CLI 已接通；工单默认关闭，SQLite 持久化具体草案、人工决定和幂等工单，拒绝/篡改/重放路径已测试 |
@@ -776,3 +779,52 @@ PYTHONPATH=src .venv-ui/bin/python -m pvdiag.ui --api-url http://127.0.0.1:8000
 真实浏览器还完成了 M1 `S2107-F3-0001` 的 B0 页面诊断、刷新后读取和证据图表检查：八次只读工具调用，根因、设备与时间 IoU 检查通过，工单关闭，零模型调用。另在独立的受控合成 F3 profile 中核对待审草案，验证未确认不提交、使用受控审批身份确认后仅生成一张本地测试工单；没有替真实 M1 场景批准工单。原始收据为 `data/runs/gradio_browser_smoke.json`，实际页面截图为 `data/runs/gradio_evidence.png` 与 `data/runs/gradio_peer_evidence.png`。两类图表均在浏览器中核对，时序图使用 UTC 日期轴，同站对比使用连续的百分比数值轴；临时服务和数据库在验证后停止。
 
 下一步仍为正式正常/留出基准、Ragas/Langfuse、真实 LLM 单例、长期记忆及自进化等；没有因此取得完整 A3 或正式泛化成绩。DeepSeek 本机凭据仍未配置，既有单场景授权未消耗。
+
+
+### 原始基线人工审核与六类 B0 开发评测（2026-10-26）
+
+- 新增 `eval/baseline_review.py`，提供 `prepare / render / review / release / status`。`prepare` 从清单绑定的原始源 Parquet 重建每个候选，与已落盘的观测逐值、逐字段精确比较，不放宽浮点容差；任一候选不一致时不创建审核包。80 个真实 M2 候选已全部通过，按原始查询窗口、设备队列和 POA 去重为 **20 份原始基线包**。
+- 审核包仅含**注入前**的完整范围、十五分钟原始功率/辐照/经验同站比值、固定筛查结果和原始基线 Parquet，不含注入故障标签、诊断结论或场景 ID。包 ID 是内容 SHA-256，源 Parquet、元数据和基线快照均绑定指纹；各场景观测另行记录独立指纹。审核目录与原候选清单在本地 SQLite 中绑定，修改目录、审核数据或基线原文都会使后续校验失败。
+- `render` 复用现有 UI 虚拟环境中的 Plotly，生成离线 HTML 与本地 `plotly.min.js`，不调用模型或外部报告服务。展示 UTC 功率、辐照和经验 P95 归一化同站比值，可缩放并查点；缺测保留空缺，不插值。报告与目录已在真实浏览器核对，预览在 `data/reviews/m2_dev_v1/preview.png`。图上的同站比值不等于物理性能比，人工接受只表示该范围内未观察到故障，不能作为生产健康认证。
+- `review` 需显式 `--interactive`，展示审核范围与报告入口后，由本地操作者输入接受/拒绝及依据，身份由本机 OS 用户注入。接受时绑定完整核对清单；同一内容决定幂等，已有决定不能静默替换。只有全部原始基线都获接受，`release` 才派生可评测开发清单；原清单、正常候选的 `evaluation_eligible=false` 和原观测文件不改写。拒绝或未审核的范围会阻止发布，不自动移除失败候选凑数。上述接受路径仅在受控合成测试中验证，**本次没有代替用户接受任何真实基线**。
+- `eval/run_bench.py` 现在校验审核清单与原目录/本地决定的一致性，并在第一次诊断前加载、检查并冻结全部观测与元数据快照。后续候选文件损坏或元数据被替换会在首次 reasoner 调用前失败；正常标签即使被手动改为 eligible，没有对应审核包仍拒绝评分。诊断图仍只接收查询范围与观测，审核身份、故障真值和注入参数不进入模型状态。
+- 新增显式 `--faults-only`，可从原 80 个开发候选中排除 20 个未审核的未注入候选，运行 60 个故障场景；摘要记录完整输入清单指纹、每个观测快照、被排除的 ID 和逐类指标。逐类/整体均复用冻结评分器 v1.2，SHA-256 保持 `03acd7aafa7b0d0eb83ea4120a3fd887b38a7ef5bc8298903c99edb740fc0670`，没有调整规则、阈值或评分标准。没有正常样本时，正常准确率和误报率保持 null；全为正例的 precision 不用于推断正常识别能力。
+- `validate_split_isolation` 补齐 F5 目标检查：即使逆变器和查询时间完全不交叉，共享被测 POA 的 F5 开发/留出组合仍拒绝。遵循用户确认，当前只有一个 POA 的 2107 不生成 F5 跨设备留出集。本轮仍只运行开发集，没有查看或评测正式留出集。
+
+**六类故障开发子集 · B0 + domain 核验实跑**：使用原 `bench/m2_dev_candidates.json` 和 `data/m2_candidates/`，输出在 `data/eval/m2_b0_fault_subset_v1/`。每类十个、总计六十个，规则版本仍为 `rule-v1`：
+
+| 故障类型 | 根因与设备联合命中 | 时间 IoU 达标 |
+|---|---:|---:|
+| F1 积灰 | 0/10 | 0/10 |
+| F2 遮挡 | 0/10 | 0/10 |
+| F3 停机 | 9/10 | 9/10 |
+| F4 组串损失 | 8/10 | 7/10 |
+| F5 辐照漂移 | 0/10 | 0/10 |
+| F6 通讯丢失 | 0/10 | 0/10 |
+| 合计 | **17/60（28.33%）** | **16/60（26.67%）** |
+
+共 414 次只读工具调用，均成功；17 个 fault、39 个 inconclusive、4 个 needs_review，弃答率 71.67%，数字引用检查通过，模型调用与未经审批写入均为零。当前规则仅实现 F3/F4 判别，且在更广的开发样本上也未全检出；这次结果明确暴露四类未覆盖与短窗局限，不是完整六类规则或 LLM/A3 成绩。该集合仍是严格筛查、缺少真实人工接受的七天候选，慢变效应较弱，没有正式正常误报率、留出泛化或生产准确率结论。
+
+**复现与人工审核入口**（在仓库根目录）：
+
+```bash
+# 准备必须使用新的目录；已存在的审核资料不会被覆盖。
+.venv/bin/python -m pvdiag.eval.baseline_review prepare --bundle data/reviews/m2_dev_v1
+PYTHONPATH=src .venv-ui/bin/python -m pvdiag.eval.baseline_review render --bundle data/reviews/m2_dev_v1
+.venv/bin/python -m pvdiag.eval.baseline_review status --bundle data/reviews/m2_dev_v1
+
+# 打开 data/reviews/m2_dev_v1/index.html，人工逐份核对后再运行：
+.venv/bin/python -m pvdiag.eval.baseline_review review --bundle data/reviews/m2_dev_v1 --review-id "<页面上的64位审核ID>" --interactive
+# 只有全部接受后才能派生开发清单；该命令不会自动接受基线：
+.venv/bin/python -m pvdiag.eval.baseline_review release --bundle data/reviews/m2_dev_v1
+
+# 无需模型、无需接受正常候选的故障子集评测：
+.venv/bin/python -m pvdiag.eval.run_bench --manifest bench/m2_dev_candidates.json --scenario-root data/m2_candidates --faults-only --verification domain --output data/eval/m2_b0_fault_subset_v1
+# 若使用人工审核后派生的清单，必须同时指定 --review-bundle 原审核目录。
+```
+
+实际审核目录已生成，状态为 **20 pending、0 accepted、0 rejected**，正常标签发布仍被阻止。M1 十场景也使用新预检流程重跑，根因/定位仍 10/10、时间窗 9/10，结果在 `data/eval/m1_benchmark_preflight_regression/`。
+
+本轮全套 **218 个测试通过**，包含新增十二个审核/划分检查，以及原有 PostgreSQL、API 与 UI 检查；覆盖精确重建、盲化去重、源/包/目录/观测/元数据篡改拒绝、决定幂等与不可替换、未审核正常标签拒绝、审核信息不进入诊断状态、后续文件异常在首次调用前拦截、显式故障子集和 F5 传感器目标隔离。Ruff 与格式检查通过，没有新增依赖。独立临时 PostgreSQL 和报告浏览服务在验证后停止。
+
+后续需要真实人工基线审核、可用长窗口慢变数据、六类规则覆盖与真实 LLM 对比；Ragas/Langfuse、正式正常/留出基准、长期记忆和自进化仍未完成。DeepSeek 单场景授权未扩大，本机尚缺凭据，本轮没有真实模型请求。

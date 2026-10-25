@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import hashlib
 import json
 import platform
 from importlib.metadata import version
@@ -23,35 +24,76 @@ async def run_benchmark(
     *,
     verification_mode="structural",
     knowledge_store=None,
+    review_bundle=None,
+    faults_only=False,
 ):
-    scenarios = manifest["scenarios"]
-    if not scenarios or any(s["split"] != "dev" for s in scenarios):
+    all_scenarios = manifest["scenarios"]
+    if not all_scenarios or any(s["split"] != "dev" for s in all_scenarios):
         raise ValueError(
             "M1 runner only permits development scenarios; held-out evaluations are not enabled"
         )
-    if len({s["scenario_id"] for s in scenarios}) != len(scenarios):
+    if len({s["scenario_id"] for s in all_scenarios}) != len(all_scenarios):
         raise ValueError("duplicate scenario IDs")
+    reviewed = manifest.get("review_catalog_sha256") is not None
+    if reviewed:
+        if review_bundle is None:
+            raise ValueError("reviewed benchmarks require the original local review bundle")
+        from pvdiag.eval.baseline_review import verify_release
+
+        verify_release(manifest, review_bundle)
+    scenarios = [s for s in all_scenarios if s["faults"]] if faults_only else all_scenarios
+    if not scenarios:
+        raise ValueError("no eligible development fault scenarios selected")
     if any(
         s.get("evaluation_eligible") is False
         or s.get("truth_scope") == "unmodified_baseline_candidate"
+        or not s["faults"]
+        and not reviewed
         for s in scenarios
     ):
         raise ValueError("unreviewed baseline candidates are not normal ground truth")
-    output.mkdir(parents=True, exist_ok=True)
-    cases, metadata_models = [], []
+    # Freeze all observation/metadata snapshots before any potentially billable call.
+    stores, requests = {}, {}
+    metadata_sha = hashlib.sha256(metadata.read_bytes()).hexdigest()
+    if reviewed and metadata_sha != manifest["metadata_sha256"]:
+        raise ValueError("benchmark metadata differs from the reviewed snapshot")
     for scenario in scenarios:
         scenario_id = scenario["scenario_id"]
         if not scenario_id.replace("-", "").replace("_", "").isalnum():
             raise ValueError("invalid scenario ID")
-        store = ObservationStore(scenario_root / scenario_id / "timeseries.parquet", metadata)
-        # IDs, fault types, injection parameters and baseline statistics are not
-        # inputs to the diagnosis. Only the public system/device/query scope is.
+        path = scenario_root / scenario_id / "timeseries.parquet"
+        if not path.resolve().is_relative_to(scenario_root.resolve()):
+            raise ValueError("benchmark observation escapes its configured root")
+        store = ObservationStore(path, metadata)
         request = DiagRequest(
             system_id=scenario["system_id"],
             device_ids=scenario["device_ids"],
             start=scenario["query_window"][0],
             end=scenario["query_window"][1],
         )
+        store.check(request)
+        if reviewed:
+            expected = hashlib.sha256()
+            for content_digest in (
+                scenario["observation_sha256"],
+                metadata_sha,
+                hashlib.sha256(b"").hexdigest(),
+            ):
+                expected.update(bytes.fromhex(content_digest))
+            if store.source_sha256 != expected.hexdigest():
+                raise ValueError(
+                    "benchmark observations differ from the reviewed candidate snapshot"
+                )
+        stores[scenario_id] = store
+        requests[scenario_id] = request
+    output.mkdir(parents=True, exist_ok=True)
+    cases, metadata_models = [], []
+    for scenario in scenarios:
+        scenario_id = scenario["scenario_id"]
+        store = stores[scenario_id]
+        # IDs, fault types, injection parameters and baseline statistics are not
+        # inputs to the diagnosis. Only the public system/device/query scope is.
+        request = requests[scenario_id]
         result = await run_diagnosis(
             store,
             request,
@@ -66,7 +108,9 @@ async def run_benchmark(
             f"{scenario_id}: {result.report.status}, tools={len(result.trace)}, loops={result.loops}"
         )
     summary = {
-        "scope": "development_smoke_injected_faults_only",
+        "scope": "development_reviewed_candidates"
+        if reviewed
+        else "development_smoke_injected_faults_only",
         "metrics": aggregate(cases),
         "cases": cases,
         "models": metadata_models,
@@ -76,9 +120,31 @@ async def run_benchmark(
         "python": platform.python_version(),
         "verification_mode": verification_mode,
         "knowledge_source_sha256": knowledge_store.source_sha256 if knowledge_store else None,
+        "manifest_sha256": hashlib.sha256(
+            json.dumps(manifest, sort_keys=True, allow_nan=False).encode()
+        ).hexdigest(),
+        "observation_snapshots": {key: store.source_sha256 for key, store in stores.items()},
+        "excluded_scenario_ids": [s["scenario_id"] for s in all_scenarios if s not in scenarios],
+        "by_fault_type": {
+            kind: aggregate(
+                [
+                    case
+                    for case, scene in zip(cases, scenarios, strict=True)
+                    if ("+".join(sorted(f["type"] for f in scene["faults"])) or "N") == kind
+                ]
+            )
+            for kind in sorted(
+                {"+".join(sorted(f["type"] for f in scene["faults"])) or "N" for scene in scenarios}
+            )
+        },
         "limitations": [
-            "Screened baseline is not manually verified healthy.",
-            "No held-out, normal-scene, or LLM-as-Judge evaluation in this smoke set.",
+            "Human baseline review is scoped observation review, not production health certification."
+            if reviewed
+            else "Screened baseline is not manually verified healthy.",
+            "No held-out or LLM-as-Judge evaluation in this development run.",
+            "Fault-only subsets cannot measure normal-scene false alarms."
+            if not any(not s["faults"] for s in scenarios)
+            else "Normal labels are limited to locally reviewed baseline scopes.",
         ],
     }
     (output / "summary.json").write_text(json.dumps(summary, indent=2, allow_nan=False) + "\n")
@@ -95,6 +161,12 @@ def main(argv=None):
     parser.add_argument("--output", type=Path, default=Path("data/eval/m1_smoke"))
     add_model_arguments(parser)
     add_knowledge_arguments(parser)
+    parser.add_argument("--review-bundle", type=Path)
+    parser.add_argument(
+        "--faults-only",
+        action="store_true",
+        help="explicitly exclude all unmodified candidates; do not report normal-scene accuracy",
+    )
     args = parser.parse_args(argv)
     if args.mode == "llm" and not args.allow_model_calls:
         parser.error("LLM benchmark requires --allow-model-calls; no model request was sent")
@@ -107,6 +179,8 @@ def main(argv=None):
             lambda: reasoner_from_args(args),
             verification_mode=args.verification,
             knowledge_store=knowledge_from_args(args),
+            review_bundle=args.review_bundle,
+            faults_only=args.faults_only,
         )
     )
     print(json.dumps(summary["metrics"], indent=2, allow_nan=False))
