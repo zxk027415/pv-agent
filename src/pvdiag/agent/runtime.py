@@ -12,6 +12,7 @@ from typing import Literal
 
 from langgraph.types import Command
 
+from pvdiag.agent.ablation import resolve_ablation, validate_ablation
 from pvdiag.agent.gateway import MCPGateway
 from pvdiag.agent.graph import build_graph
 from pvdiag.agent.state import DiagRequest, RunResult
@@ -61,16 +62,20 @@ async def open_runtime(
     persistence=None,
     max_calls=30,
     max_loops=3,
-    verification_mode="structural",
+    verification_mode=None,
     event_sink=None,
+    ablation=None,
 ):
+    policy, verification_mode = resolve_ablation(ablation, verification_mode)
+    validate_ablation(policy, reasoner, knowledge_store, ops_store)
     async with AsyncExitStack() as stack:
         reader = await stack.enter_async_context(
             MCPGateway.connect(
                 data_server(store),
-                analytics_server(store),
+                analytics_server(store) if policy is None or policy.level in {"A2", "A3"} else None,
                 knowledge_server(knowledge_store) if knowledge_store else None,
                 knowledge_source_sha256=knowledge_store.source_sha256 if knowledge_store else None,
+                allowed_tools=policy.model_tools if policy else None,
             )
         )
         writer = None
@@ -89,6 +94,7 @@ async def open_runtime(
             checkpointer=persistence.saver if persistence else None,
             verification_mode=verification_mode,
             ops_gateway=writer,
+            ablation=ablation,
         )
         packages = {}
         for name in (
@@ -127,6 +133,7 @@ async def open_runtime(
             "verification_mode": verification_mode,
             "max_calls": max_calls,
             "max_loops": max_loops,
+            "ablation": policy.metadata() if policy else None,
             "packages": packages,
             "python_version": platform.python_version(),
         }

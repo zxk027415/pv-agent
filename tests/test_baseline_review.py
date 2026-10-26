@@ -281,6 +281,41 @@ def test_explicit_fault_only_mode_excludes_normals_and_preserves_fixed_scorer(re
     assert summary["by_fault_type"]["F4"]["scenarios"] == 1
 
 
+@pytest.mark.parametrize("level", ["A0", "A1", "A2", "A3"])
+def test_offline_ablation_runner_records_policy_and_never_passes_truth(
+    review_fixture, monkeypatch, level
+):
+    from test_ablation import inconclusive, offline_model
+
+    from pvdiag.agent.llm import LLMReasoner
+    from pvdiag.knowledge.store import KnowledgeStore
+
+    attempts = offline_model(monkeypatch, inconclusive)
+    manifest, _, metadata, root, bundle = review_fixture
+    summary = asyncio.run(
+        run_benchmark(
+            manifest,
+            root,
+            metadata,
+            bundle / "eval",
+            lambda: LLMReasoner("offline"),
+            faults_only=True,
+            ablation=level,
+            knowledge_store=KnowledgeStore() if level == "A3" else None,
+        )
+    )
+    saved = json.loads((bundle / "eval/fixture-F4.json").read_text())
+    assert saved["ablation"]["level"] == summary["ablation"]["level"] == level
+    assert saved["ablation"]["summary_sha256"] == summary["summary_snapshots"]["fixture-F4"]
+    assert summary["verification_mode"] == ("domain_llm" if level == "A3" else "structural")
+    assert saved["model"]["reported_models"] == ["offline-ablation-fixture"]
+    assert summary["metrics"]["scorer_version"] == "v1.2"
+    assert summary["metrics"]["normal_false_alarm_rate"] is None
+    assert summary["excluded_scenario_ids"] == ["fixture-N"]
+    for forbidden in ('"faults"', '"scenario_id"', '"truth_scope"', "fixture-F4", "fixture-N"):
+        assert forbidden not in json.dumps(attempts)
+
+
 def test_f5_target_isolation_includes_sensor_ids_even_when_all_inverters_and_dates_are_disjoint():
     fault = FaultSpec("F5", "poa", "2019-01-04", "2019-01-08", drift_per_day=0.005)
     dev = Scenario(

@@ -265,6 +265,7 @@ class RunResult(Model):
     approval: ApprovalRecord | None = None
     action_outcome: ActionOutcome | None = None
     ops_policy_sha256: str | None = None
+    ablation: dict | None = None
 
 
 class DiagState(TypedDict, total=False):

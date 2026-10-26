@@ -71,6 +71,7 @@ async def execute(args):
             ops_store=ops,
             persistence=persistence,
             verification_mode=args.verification,
+            ablation=args.ablation,
         ) as runtime:
             if args.command == "start":
                 request = DiagRequest(

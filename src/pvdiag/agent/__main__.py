@@ -13,6 +13,7 @@ from uuid import uuid4
 from dotenv import dotenv_values
 from langgraph.types import Command
 
+from pvdiag.agent.ablation import LEVELS, resolve_ablation
 from pvdiag.agent.rules import RuleReasoner
 from pvdiag.agent.runtime import open_runtime
 from pvdiag.agent.state import ApprovalDecision, DiagRequest
@@ -24,7 +25,12 @@ from pvdiag.mcp_servers.store import ObservationStore
 
 
 def reasoner_from_args(args):
+    policy, _ = resolve_ablation(
+        getattr(args, "ablation", None), getattr(args, "verification", None)
+    )
     if args.mode == "b0":
+        if policy:
+            raise ValueError("A0–A3 require --mode llm")
         return RuleReasoner()
     if not args.allow_model_calls:
         raise ValueError("LLM mode requires --allow-model-calls; no model request was sent")
@@ -59,8 +65,11 @@ def add_model_arguments(parser):
         "--credential-env", help="explicit credential field for the selected endpoint"
     )
     parser.add_argument(
-        "--verification", choices=["structural", "domain", "domain_llm"], default="structural"
+        "--verification",
+        choices=["structural", "domain", "domain_llm"],
+        help="default: structural; A3 fixes this to domain_llm",
     )
+    parser.add_argument("--ablation", choices=LEVELS, help="enforce an A0–A3 experiment policy")
     parser.add_argument(
         "--allow-model-calls",
         action="store_true",
@@ -75,10 +84,11 @@ async def run_diagnosis(
     *,
     max_calls=30,
     max_loops=3,
-    verification_mode="structural",
+    verification_mode=None,
     knowledge_store=None,
     ops_store=None,
     approval_handler=None,
+    ablation=None,
 ):
     if (ops_store is None) != (approval_handler is None):
         raise ValueError("operations require an explicit trusted human approval handler")
@@ -90,6 +100,7 @@ async def run_diagnosis(
         verification_mode=verification_mode,
         knowledge_store=knowledge_store,
         ops_store=ops_store,
+        ablation=ablation,
     ) as runtime:
         graph = runtime.graph
         config = {"configurable": {"thread_id": str(uuid4())}, "recursion_limit": 40}
@@ -161,6 +172,7 @@ def main(argv=None):
             knowledge_store=knowledge_from_args(args),
             ops_store=ops_store,
             approval_handler=console_approval if args.enable_ops else None,
+            ablation=args.ablation,
         )
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)

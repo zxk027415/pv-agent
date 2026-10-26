@@ -10,6 +10,7 @@ from time import perf_counter
 
 from fastmcp import Client
 
+from pvdiag.agent.ablation import ANALYTICS_TOOLS, DATA_TOOLS, SUMMARY_TOOLS
 from pvdiag.agent.state import DiagRequest, Scope, ToolCall, ToolTrace
 from pvdiag.knowledge.models import (
     KNOWLEDGE_TOOLS,
@@ -56,9 +57,14 @@ INVESTIGATE = set(CONTRACTS) - BOOTSTRAP
 
 
 class MCPGateway:
-    def __init__(self, clients, tools, knowledge_source_sha256=None):
+    def __init__(self, clients, tools, knowledge_source_sha256=None, allowed_tools=None):
         self.clients = clients
-        self.tools = tools
+        self.allowed_tools = frozenset(INVESTIGATE if allowed_tools is None else allowed_tools)
+        self.tools = (
+            tools
+            if allowed_tools is None
+            else {name: tool for name, tool in tools.items() if name in self.allowed_tools}
+        )
         self.knowledge_source_sha256 = knowledge_source_sha256
 
     @classmethod
@@ -66,15 +72,19 @@ class MCPGateway:
     async def connect(
         cls,
         data_transport,
-        analytics_transport,
+        analytics_transport=None,
         knowledge_transport=None,
         *,
         knowledge_source_sha256=None,
+        allowed_tools=None,
     ):
         if (knowledge_transport is None) != (knowledge_source_sha256 is None):
             raise ValueError("knowledge transport requires an explicitly pinned corpus fingerprint")
-        required = set(CONTRACTS) - KNOWLEDGE_TOOLS
-        transports = [data_transport, analytics_transport]
+        required = set(DATA_TOOLS)
+        transports = [data_transport]
+        if analytics_transport is not None:
+            required |= ANALYTICS_TOOLS
+            transports.append(analytics_transport)
         if knowledge_transport is not None:
             required |= KNOWLEDGE_TOOLS
             transports.append(knowledge_transport)
@@ -99,12 +109,18 @@ class MCPGateway:
                     }
             if set(clients) != required:
                 raise ValueError("MCP servers do not expose the required tools")
-            yield cls(clients, catalog, knowledge_source_sha256)
+            if allowed_tools is not None and not set(allowed_tools) <= required - BOOTSTRAP:
+                raise ValueError("ablation tools are not mounted")
+            yield cls(clients, catalog, knowledge_source_sha256, allowed_tools)
 
     async def call(self, call: ToolCall, request: DiagRequest, scope: Scope | None, node: str):
         start = perf_counter()
         try:
-            allowed = BOOTSTRAP if node == "guard_in" else INVESTIGATE
+            allowed = {
+                "guard_in": BOOTSTRAP,
+                "fixed_summary": SUMMARY_TOOLS,
+                "investigate": self.allowed_tools,
+            }.get(node, frozenset())
             if call.name not in allowed:
                 raise ValueError("tool is not allowed in this node")
             if call.name not in self.clients:

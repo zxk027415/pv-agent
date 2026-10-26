@@ -9,6 +9,7 @@ from importlib.metadata import version
 from pathlib import Path
 
 from pvdiag.agent.__main__ import add_model_arguments, reasoner_from_args, run_diagnosis
+from pvdiag.agent.ablation import resolve_ablation
 from pvdiag.agent.state import DiagRequest
 from pvdiag.eval.scorer import aggregate, score_case
 from pvdiag.mcp_servers.pv_knowledge import add_knowledge_arguments, knowledge_from_args
@@ -22,11 +23,15 @@ async def run_benchmark(
     output,
     reasoner_factory,
     *,
-    verification_mode="structural",
+    verification_mode=None,
     knowledge_store=None,
     review_bundle=None,
     faults_only=False,
+    ablation=None,
 ):
+    policy, verification_mode = resolve_ablation(ablation, verification_mode)
+    if policy and (knowledge_store is not None) != (policy.level == "A3"):
+        raise ValueError("only A3 requires and permits a knowledge snapshot")
     all_scenarios = manifest["scenarios"]
     if not all_scenarios or any(s["split"] != "dev" for s in all_scenarios):
         raise ValueError(
@@ -87,7 +92,7 @@ async def run_benchmark(
         stores[scenario_id] = store
         requests[scenario_id] = request
     output.mkdir(parents=True, exist_ok=True)
-    cases, metadata_models = [], []
+    cases, metadata_models, summary_snapshots = [], [], {}
     for scenario in scenarios:
         scenario_id = scenario["scenario_id"]
         store = stores[scenario_id]
@@ -100,10 +105,13 @@ async def run_benchmark(
             reasoner_factory(),
             verification_mode=verification_mode,
             knowledge_store=knowledge_store,
+            ablation=ablation,
         )
         (output / f"{scenario_id}.json").write_text(result.model_dump_json(indent=2) + "\n")
         cases.append(score_case(scenario, result))
         metadata_models.append(result.model)
+        if result.ablation:
+            summary_snapshots[scenario_id] = result.ablation["summary_sha256"]
         print(
             f"{scenario_id}: {result.report.status}, tools={len(result.trace)}, loops={result.loops}"
         )
@@ -119,11 +127,13 @@ async def run_benchmark(
         },
         "python": platform.python_version(),
         "verification_mode": verification_mode,
+        "ablation": policy.metadata() if policy else None,
         "knowledge_source_sha256": knowledge_store.source_sha256 if knowledge_store else None,
         "manifest_sha256": hashlib.sha256(
             json.dumps(manifest, sort_keys=True, allow_nan=False).encode()
         ).hexdigest(),
         "observation_snapshots": {key: store.source_sha256 for key, store in stores.items()},
+        "summary_snapshots": summary_snapshots,
         "excluded_scenario_ids": [s["scenario_id"] for s in all_scenarios if s not in scenarios],
         "by_fault_type": {
             kind: aggregate(
@@ -181,6 +191,7 @@ def main(argv=None):
             knowledge_store=knowledge_from_args(args),
             review_bundle=args.review_bundle,
             faults_only=args.faults_only,
+            ablation=args.ablation,
         )
     )
     print(json.dumps(summary["metrics"], indent=2, allow_nan=False))

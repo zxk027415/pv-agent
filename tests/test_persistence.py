@@ -284,6 +284,47 @@ asyncio.run(main())
     asyncio.run(verify())
 
 
+def test_ablation_checkpoint_preserves_summary_and_rejects_level_change(pg, tmp_path, monkeypatch):
+    from test_ablation import inconclusive, offline_model
+
+    dsn, schema = pg
+    store, request, _, _, _ = context(tmp_path, "F3")
+    attempts = offline_model(monkeypatch, inconclusive)
+
+    async def verify():
+        async with (
+            PostgresStore.open(dsn, schema=schema, initialize=True) as persistence,
+            open_runtime(
+                store, LLMReasoner("offline"), persistence=persistence, ablation="A0"
+            ) as runtime,
+        ):
+            first = await runtime.start("ablation-bound", request)
+            original_contract = runtime.contract
+            assert first.status == "completed"
+            assert first.result.model_usage["model_calls"] == 1
+            assert len(first.result.ablation["summary_evidence_ids"]) == 8
+        # Reconstruct both the model and runtime after closing the PG connection.
+        async with PostgresStore.open(dsn, schema=schema) as persistence:
+            async with open_runtime(
+                store, LLMReasoner("offline"), persistence=persistence, ablation="A1"
+            ) as runtime:
+                assert {
+                    k for k in runtime.contract if runtime.contract[k] != original_contract[k]
+                } == {"ablation"}
+                with pytest.raises(ValueError, match="context changed"):
+                    await runtime.resume("ablation-bound")
+            fresh = LLMReasoner("offline")
+            async with open_runtime(
+                store, fresh, persistence=persistence, ablation="A0"
+            ) as runtime:
+                restored = await runtime.resume("ablation-bound")
+                assert restored == first
+                assert fresh.usage["model_calls"] == 1
+                assert len(attempts) == 1
+
+    asyncio.run(verify())
+
+
 def test_llm_accounting_is_committed_before_requests_and_restored_on_reconstruction(
     pg, tmp_path, monkeypatch
 ):

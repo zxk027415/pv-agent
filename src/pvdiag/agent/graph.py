@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 from copy import deepcopy
 from pathlib import Path
 from time import time
@@ -12,6 +13,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 
+from pvdiag.agent.ablation import resolve_ablation, summary_calls, validate_ablation
 from pvdiag.agent.guards import check_report, degrade
 from pvdiag.agent.state import (
     ActionOutcome,
@@ -43,13 +45,20 @@ def build_graph(
     max_loops=3,
     checkpointer=None,
     prompt_path=DEFAULT_PROMPT,
-    verification_mode="structural",
+    verification_mode=None,
     review_prompt_path=DEFAULT_REVIEW_PROMPT,
     ops_gateway=None,
+    ablation=None,
 ):
+    policy, verification_mode = resolve_ablation(ablation, verification_mode)
+    validate_ablation(policy, reasoner, gateway.knowledge_source_sha256, ops_gateway)
+    if policy and gateway.allowed_tools != policy.model_tools:
+        raise ValueError("gateway permissions differ from the ablation policy")
     if not 2 <= max_calls <= 100 or not 1 <= max_loops <= 3:
         raise ValueError("invalid execution budget")
     prompt = prompt_path.read_text()
+    if policy:
+        prompt += policy.prompt()
     if verification_mode not in {"structural", "domain", "domain_llm"}:
         raise ValueError("invalid verification mode")
     if verification_mode == "domain_llm" and not callable(getattr(reasoner, "review", None)):
@@ -142,9 +151,37 @@ def build_graph(
             "action_outcome": None,
         }
 
+    async def fixed_summary(state):
+        calls = summary_calls(state["request"], state["scope"])
+        if len(calls) + len(state["trace"]) > max_calls:
+            raise ValueError("tool budget cannot cover the complete fixed summary")
+        responses = await asyncio.gather(
+            *(
+                gateway.call(call, state["request"], state["scope"], "fixed_summary")
+                for call in calls
+            )
+        )
+        if any(item is None for item, _ in responses):
+            raise ValueError("cannot establish the complete fixed summary")
+        return {
+            "evidence": state["evidence"] | {ev["evidence_id"]: ev for ev, _ in responses},
+            "trace": [*state["trace"], *(trace for _, trace in responses)],
+            "plan": Plan(calls=[]),
+            "loops": 1 if policy.level == "A0" else 0,
+        }
+
+    def model_state(state):
+        if policy and not policy.feedback:
+            # No output-check findings, prior verdicts or reviewer guidance can
+            # become an implicit verification agent in A0–A2.
+            return {
+                key: state[key] for key in ("request", "scope", "evidence", "trace", "loops")
+            } | {"critique": [], "verification": []}
+        return state
+
     async def plan(state):
         try:
-            candidate = await reasoner.plan(state, gateway.tools, prompt)
+            candidate = await reasoner.plan(model_state(state), gateway.tools, prompt)
             candidate = Plan.model_validate(
                 candidate.model_dump() if isinstance(candidate, Plan) else candidate
             )
@@ -173,7 +210,7 @@ def build_graph(
 
     async def hypothesize(state):
         try:
-            report = await reasoner.hypothesize(state, prompt)
+            report = await reasoner.hypothesize(model_state(state), prompt)
             return {
                 "verdict": DiagnosisReport.model_validate(
                     report.model_dump() if isinstance(report, DiagnosisReport) else report
@@ -234,7 +271,11 @@ def build_graph(
         return {"critique": critique, "verification": [*state["verification"], record]}
 
     def route(state):
+        if policy and policy.level == "A0":
+            return "propose_action"
         repeat = state["critique"] or not state["plan"].ready_for_verdict
+        if policy and not policy.feedback:
+            repeat = not state["plan"].ready_for_verdict
         return (
             "plan"
             if repeat and state["loops"] < max_loops and len(state["trace"]) < max_calls
@@ -336,6 +377,25 @@ def build_graph(
             verdict, state["evidence"], state["request"], state["scope"]
         ):
             verdict = degrade(state["evidence"])
+        ablation_record = None
+        if policy:
+            summary_ids = [
+                trace.evidence_id
+                for trace in state["trace"]
+                if trace.node in {"guard_in", "fixed_summary"} and trace.success
+            ]
+            ablation_record = policy.metadata() | {
+                "max_tool_calls": max_calls,
+                "max_loops": 1 if policy.level == "A0" else max_loops,
+                "summary_evidence_ids": summary_ids,
+                "summary_sha256": hashlib.sha256(
+                    json.dumps(
+                        {key: state["evidence"][key] for key in summary_ids},
+                        sort_keys=True,
+                        allow_nan=False,
+                    ).encode()
+                ).hexdigest(),
+            }
         result = RunResult(
             request=state["request"],
             report=verdict,
@@ -355,12 +415,14 @@ def build_graph(
             approval=state.get("approval"),
             action_outcome=state.get("action_outcome"),
             ops_policy_sha256=ops_policy_sha,
+            ablation=ablation_record,
         )
         return {"verdict": verdict, "result": result}
 
     graph = StateGraph(DiagState)
     for name, node in (
         ("guard_in", guard_in),
+        ("fixed_summary", fixed_summary),
         ("plan", plan),
         ("investigate", investigate),
         ("hypothesize", hypothesize),
@@ -373,7 +435,8 @@ def build_graph(
     ):
         graph.add_node(name, node)
     graph.add_edge(START, "guard_in")
-    graph.add_edge("guard_in", "plan")
+    graph.add_edge("guard_in", "fixed_summary" if policy else "plan")
+    graph.add_edge("fixed_summary", "hypothesize" if policy and policy.level == "A0" else "plan")
     graph.add_edge("plan", "investigate")
     graph.add_edge("investigate", "hypothesize")
     graph.add_edge("hypothesize", "verify")
