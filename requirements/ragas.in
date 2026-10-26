@@ -1,0 +1,4 @@
+# Optional Ragas runtime; resolved together with the project's core dependencies.
+ragas==0.4.3
+# Ragas imports VertexAI compatibility classes removed in community 0.4.x.
+langchain-community==0.3.31

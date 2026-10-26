@@ -1,6 +1,6 @@
 # PV Diagnosis Agent · 设计文档
 
-> 版本：v0.1（2026-10-24）· 进度更新：2026-10-26，规则诊断、BGE 检索、PostgresSaver、FastAPI/SSE/身份绑定审批与 Gradio 单页已验证；已补基线审核、rule-v2 六类开发对比、A0–A3 执行边界和 Langfuse 本地追踪/导出，云端验收、真实 LLM 消融与 Ragas 尚未完成，DeepSeek 单例已授权但缺本机凭据
+> 版本：v0.1（2026-10-24）· 进度更新：2026-10-26，规则诊断、BGE 检索、PostgresSaver、FastAPI/SSE/身份绑定审批与 Gradio 单页已验证；已补基线审核、rule-v2 六类开发对比、A0–A3、Langfuse 本地导出及 Ragas 运行链，云端验收、真实模型/Judge 评测仍待推进，DeepSeek 单例已授权但缺本机凭据
 > 一句话：基于 LangGraph + MCP 的光伏电站时序故障诊断 Agent，在注入已知故障的公开数据上做可复现评测，并用固定评分器驱动 harness 自进化。
 
 ---
@@ -441,9 +441,10 @@ pv-diagnosis-agent/
 | 人工审批与模拟工单 | `interrupt` / `Command(resume=...)` 和本地 CLI 已接通；工单默认关闭，SQLite 持久化具体草案、人工决定和幂等工单，拒绝/篡改/重放路径已测试 |
 | 诊断持久化 | 已接真实 AsyncPostgresSaver、显式 schema 初始化、start/resume/show CLI、版本/数据绑定、活动锁及独立模型预算账本；受控审批已在不同 Python 进程间恢复，实际 M1 十场景保存/重开结果一致 |
 | 服务化 | FastAPI/SSE、服务端 profile 白名单、开发身份/角色、请求归属、幂等诊断、持久事件重放及身份绑定审批已验证；默认仅监听本机，Gradio 接入见下节，尚无生产身份系统 |
-| M2 | 六类原语、短窗候选、领域核验、混合检索、审批及检查点/API 恢复已实现；正式正常/留出基准集、Ragas、Langfuse 云端验收与完整 LLM 消融尚未完成 |
+| M2 | 六类原语、短窗候选、领域核验、混合检索、审批及检查点/API 恢复已实现；正式正常/留出基准集、真实 Ragas Judge、Langfuse 云端验收与完整 LLM 消融尚未完成 |
 | 消融执行边界 | 已接 A0–A3 显式档位、统一固定摘要、网关工具白名单、隔离核验反馈、共享模型预算与恢复契约；271 项测试通过，新增 30 项离线边界/评测/真实 PostgreSQL 检查，不代表真实模型消融成绩 |
 | 可观测 | 模型、只读工具、审批后工单及 API 已接显式本地追踪；开发评测可生成 Dataset/Experiment 和固定评分导出；OTLP v4 / Dataset v2 / Scores 离线 HTTP 契约与真实 PostgreSQL 审批恢复已验证，真实 B0 十场景生成 101 条观察记录，尚未上传云端 |
+| Ragas | 已接原生 context precision/recall/faithfulness、独立回答/Judge 预算、可恢复缓存及本地追踪；BM25/BGE 三十题输入包已生成，每套九十段上下文，原生算法的离线契约已验证；尚无真实 Judge 质量分数，参考答案仍未经独立审核 |
 | M3–M4 | M4 的 Gradio 本机单页已接通；长期记忆、自进化、Docker Compose、README 和完整演示打包仍未完成，没有进化、泛化或完整消融结果 |
 
 ### 数据核验结论与处理边界
@@ -922,3 +923,37 @@ rule-v2 共 484 次只读工具调用（平均 8.07 次/场景，rule-v1 为 6.9
 **验证与待办**：全套 **290 个测试通过**，含新增十八项追踪/导出检查和一项带身份认证的 API 追踪检查；既有 PostgreSQL 用例扩展验证了六次离线 SDK 调用、断开连接后审批恢复、同一 trace 内真实工单调用，以及追踪配置变化的恢复拒绝。模型测试使用明确命名的离线 SDK，HTTP 同步使用契约传输替身；真实 MCP、SQLite、PostgreSQL、API/SSE 均运行验证，尚无真实 Langfuse Cloud 接收/仪表盘验收。Ruff、格式、依赖兼容、离线 lock 与差异空白检查通过，无新增依赖。隔离测试 PostgreSQL 已停止并核实无服务运行。
 
 本机未检测到 `DEEPSEEK_API_KEY`、`LANGFUSE_BASE_URL`、`LANGFUSE_PUBLIC_KEY` 或 `LANGFUSE_SECRET_KEY`；本批真实模型调用与云端写入均为零。已向用户请求只覆盖这份 B0 导出包的云端上传授权，收到授权且本机凭据可用后才能执行；不把 DeepSeek 单场景授权扩展到云端发布、批量模型或 Ragas Judge。真实模型消融、Ragas、正常基线人工审核、F5 独立 POA、正式留出/跨站评测、长期记忆、自进化与部署打包仍待推进。
+
+### Ragas 三指标执行链与分角色预算（2026-10-26）
+
+`eval/ragas_inputs.py`、`eval/ragas_store.py`、`eval/ragas.py` 接通 §9.2 的知识检索子评测。使用锁定的 **Ragas 0.4.3 原生 `ContextPrecisionWithReference`、`ContextRecall`、`Faithfulness`**，通过其异步指标接口执行，未自行重写这些指标的计算公式；原有故障诊断评分器 v1.2 不变。固定评分器与 Ragas 模型 Judge 是不同的评测来源。
+
+- **输入先冻结**：`prepare` 仅执行现有检索，保存三十题中的选定问题、参考答案、完整 MCP 格式知识证据、文档/许可来源、QA 与语料清单指纹、检索配置及版本。BM25、BGE 分别保存，不能在恢复时互换。执行前复核全部问题和片段：自洽证据 ID、QA/语料快照、原文/文档一致性，以及语料清单与检索配置共同派生的知识来源 SHA-256。执行消费所审阅的排名/上下文快照，不重新加载 BGE 或修改检索结果，也不把来源摘要当作独立专家背书。
+- **生成器与 Judge 隔离**：`harness/qa_answer_prompt.md` 只让回答生成器看到 question 与本次检索的文档 ID/标题/文本；参考答案和相关文档标签不进入生成器。生成回答必须使用已检索的文档引用，非法引用拒绝计分，不用参考答案填补生成失败。之后由原生 Ragas 将 reference 提供给 precision/recall，将生成回答提供给 faithfulness。回答提示在作业启动时冻结；即使文件在两题之间被编辑，该作业仍使用原提示，后续恢复按契约拒绝新版本。
+- **三项含义**：context precision 使用模型对按排名上下文的有用性作二元判断，再由 Ragas 算平均精度；context recall 按参考答案的陈述归因；faithfulness 先把实际回答拆成陈述，再核对每条是否由检索上下文支持。项目适配器检查二元输出是否合法、faithfulness 陈述是否被遗漏或替换；不把非法的非零值当作通过。原生空陈述等 NaN 结果转为 `null` 并保留覆盖率，不能作为零分、满分或全数据集平均值。
+- **费用边界**：回答生成和 Judge 分别要求 `--allow-generation` / `--allow-judge`，分别配置总调用预算和模型/端点/凭据字段。`prepare` 输出调用上界；完整计划不能用单题默认预算启动。Top-3 一题至多一次回答生成、六次 Judge（precision 三次、recall 一次、faithfulness 两次），三十题每套上界为 **30 + 180 = 210 次调用**；无重试的正常路径上界不包含失败后的人工恢复重发。仍复用既有无 SDK 自动重试、每次最多 4096 输出 token 的适配器。现有单场景诊断授权不涵盖这些调用。
+- **持久预算与缓存**：SQLite 分角色原子预留预算，统计跨全部问题生效；进程异常后未知调用仍占预算，未知 token 不当成零。只有通过结构和任务约束的输出进入缓存。`--resume` 重用已验证输出与完成场景，继续未完成阶段，不重置模型账本；同一作业不能修改数据、模型、提示/指标源码或预算，跨进程锁阻止同作业并发控制。恢复仍受原预算限制，不保证失败重发一定有剩余额度。
+- **结果与追踪**：保存原生指标值、每题覆盖/状态、完整结果或受控错误类型、两个角色的已知/未知用量、实际返回模型名、Ragas 指标/提示源码指纹及项目策略指纹。调用接入已有本地 generation/root 追踪，不自动上传。覆盖不完整时主表指标为 null，`observed_metric_means` 只供部分结果排查。没有可靠定价时美元成本为 null，不从 token 数猜实际扣费。
+- **独立运行时**：新增 `requirements/ragas.in` 与 macOS arm64 锁定文件，使用 `.venv-eval`。实际安装发现 Ragas 0.4.3 仍导入 VertexAI 兼容类，最新版 `langchain-community 0.4.2` 已移除此模块；已锁定可成功导入的 `0.3.31`。评测环境的 Hub 版本与现有 BGE/Transformers 环境不同，输入准备使用原知识环境，Ragas 执行使用独立环境。该运行时不需要额外下载 embedding 模型。Ragas 自带遥测在导入前关闭，项目本地追踪另行保留。
+
+已用真实本地 BM25 与 BGE 生成 `data/eval/ragas/bm25_plan.json`、`data/eval/ragas/hybrid_bge_plan.json`，各三十题、九十段上下文，均保留 `project_authored_not_independently_reviewed` 标记；两者的 QA/语料清单一致，知识来源指纹和检索配置分别绑定。输入检查收据在 `data/eval/ragas/preparation_receipt.json`。这些是实际检索输入，不含真实模型生成回答或 Judge 得分，不能拿原文命中率代替 Ragas。
+
+```bash
+# 可选评测环境（本批已安装验证；主诊断/BGE 环境不变）：
+uv venv --python .venv/bin/python .venv-eval
+uv pip sync --python .venv-eval/bin/python requirements/ragas-macos-arm64.txt
+uv pip install --python .venv-eval/bin/python --no-deps -e .
+
+# 不调用 LLM 的准备：
+.venv/bin/python -m pvdiag.eval.ragas prepare --output data/eval/ragas/bm25_plan.json
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 .venv/bin/python -m pvdiag.eval.ragas prepare --retrieval-mode hybrid_bge --embedding-model-path data/models/bge-small-zh-v1.5 --reranker-model-path data/models/bge-reranker-base --output data/eval/ragas/hybrid_bge_plan.json
+.venv/bin/python -m pvdiag.eval.ragas prepare --question-ids KB001 --output data/eval/ragas/bm25_pilot_plan.json
+
+# 以下仅供后续取得回答生成/Judge 的独立授权、配置本机凭据后使用；本批未执行：
+.venv-eval/bin/python -m pvdiag.eval.ragas run --plan data/eval/ragas/bm25_pilot_plan.json --db data/eval/ragas/pilot.sqlite3 --job-id kb-pilot --output data/eval/ragas/pilot_result.json --allow-generation --allow-judge --max-answer-calls 1 --max-judge-calls 6
+# 恢复须使用同一输入/模型/预算，并显式加 --resume。
+```
+
+**验证结果**：全套 **312 项 pytest 通过**，新增二十二项检查；其中一个用例在锁定的独立环境执行 **九项原生 Ragas 子检查**，拦截网络连接与 DNS，实际外部网络尝试为零。覆盖原生公式、生成器标签隔离、完整/部分结果恢复、未知用量与角色预算、预算不可重置/扩大、非法二元值、遗漏 faithfulness 陈述、NaN/空上下文、跨题提示冻结，以及来源/配置/标签/片段篡改拒绝。真实 LangChain/OpenAI 兼容适配器额外完成五类结构化 schema 绑定，未发送模型请求。已有真实 PostgreSQL、API、UI、审批、知识与规则检查同时通过；独立测试 PostgreSQL 在验证后停止并核实。Ruff、格式、主环境/评测环境依赖兼容、离线 lock 与差异空白检查通过。故障评分器 SHA-256 仍为 `03acd7aafa7b0d0eb83ea4120a3fd887b38a7ef5bc8298903c99edb740fc0670`。
+
+本机复查仍无 DeepSeek 凭据，本批实际回答生成/Judge 付费调用均为零。离线子检查中的 SDK 输出及 token 值是受控测试数据，只证明执行/计费边界与原生公式调用，不代表真实问答质量。现有 DeepSeek 授权仍仅覆盖一个故障开发场景、最多六次诊断模型调用，未消耗；Ragas 回答生成/Judge 需要另行授权，Langfuse 的具体 B0 上传授权仍待用户决定。参考答案的独立审核、真实 Judge、真实 A0–A3、正常/留出/跨站数据、F5 独立传感器、长期记忆、自进化和部署打包仍未完成，整体目标保持推进中。
