@@ -14,6 +14,8 @@ from pvdiag.agent.state import DiagRequest
 from pvdiag.eval.scorer import aggregate, score_case
 from pvdiag.mcp_servers.pv_knowledge import add_knowledge_arguments, knowledge_from_args
 from pvdiag.mcp_servers.store import ObservationStore
+from pvdiag.observability.evaluation import EvaluationRun
+from pvdiag.observability.store import TraceStore
 
 
 async def run_benchmark(
@@ -28,6 +30,7 @@ async def run_benchmark(
     review_bundle=None,
     faults_only=False,
     ablation=None,
+    trace_store=None,
 ):
     policy, verification_mode = resolve_ablation(ablation, verification_mode)
     if policy and (knowledge_store is not None) != (policy.level == "A3"):
@@ -91,6 +94,19 @@ async def run_benchmark(
                 )
         stores[scenario_id] = store
         requests[scenario_id] = request
+    evaluation = (
+        EvaluationRun(
+            trace_store,
+            manifest,
+            scenarios,
+            requests,
+            {key: store.source_sha256 for key, store in stores.items()},
+            ablation=ablation,
+            verification=verification_mode,
+        )
+        if trace_store
+        else None
+    )
     output.mkdir(parents=True, exist_ok=True)
     cases, metadata_models, summary_snapshots = [], [], {}
     for scenario in scenarios:
@@ -106,9 +122,12 @@ async def run_benchmark(
             verification_mode=verification_mode,
             knowledge_store=knowledge_store,
             ablation=ablation,
+            trace_store=trace_store,
         )
         (output / f"{scenario_id}.json").write_text(result.model_dump_json(indent=2) + "\n")
         cases.append(score_case(scenario, result))
+        if evaluation:
+            evaluation.attach(scenario_id, result, cases[-1])
         metadata_models.append(result.model)
         if result.ablation:
             summary_snapshots[scenario_id] = result.ablation["summary_sha256"]
@@ -134,6 +153,7 @@ async def run_benchmark(
         ).hexdigest(),
         "observation_snapshots": {key: store.source_sha256 for key, store in stores.items()},
         "summary_snapshots": summary_snapshots,
+        "observability": evaluation.receipt() if evaluation else None,
         "excluded_scenario_ids": [s["scenario_id"] for s in all_scenarios if s not in scenarios],
         "by_fault_type": {
             kind: aggregate(
@@ -192,6 +212,7 @@ def main(argv=None):
             review_bundle=args.review_bundle,
             faults_only=args.faults_only,
             ablation=args.ablation,
+            trace_store=TraceStore(args.trace_db) if args.trace_db else None,
         )
     )
     print(json.dumps(summary["metrics"], indent=2, allow_nan=False))

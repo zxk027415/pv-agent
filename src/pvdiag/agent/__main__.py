@@ -22,6 +22,8 @@ from pvdiag.mcp_servers.pv_knowledge import (
     knowledge_from_args,
 )
 from pvdiag.mcp_servers.store import ObservationStore
+from pvdiag.observability.store import TraceStore
+from pvdiag.observability.tracing import trace_session
 
 
 def reasoner_from_args(args):
@@ -71,6 +73,9 @@ def add_model_arguments(parser):
     )
     parser.add_argument("--ablation", choices=LEVELS, help="enforce an A0–A3 experiment policy")
     parser.add_argument(
+        "--trace-db", type=Path, help="explicitly record a local Langfuse trace outbox"
+    )
+    parser.add_argument(
         "--allow-model-calls",
         action="store_true",
         help="explicitly permit potentially billable model requests",
@@ -89,6 +94,7 @@ async def run_diagnosis(
     ops_store=None,
     approval_handler=None,
     ablation=None,
+    trace_store=None,
 ):
     if (ops_store is None) != (approval_handler is None):
         raise ValueError("operations require an explicit trusted human approval handler")
@@ -101,18 +107,19 @@ async def run_diagnosis(
         knowledge_store=knowledge_store,
         ops_store=ops_store,
         ablation=ablation,
+        trace_store=trace_store,
     ) as runtime:
         graph = runtime.graph
         config = {"configurable": {"thread_id": str(uuid4())}, "recursion_limit": 40}
-        state = await graph.ainvoke(
-            {"request": request},
-            config=config,
-        )
-        if state.get("__interrupt__"):
-            decision = await approval_handler(state["__interrupt__"][0].value)
-            if isinstance(decision, ApprovalDecision):
-                decision = decision.model_dump(mode="json")
-            state = await graph.ainvoke(Command(resume=decision), config=config)
+        with trace_session(
+            trace_store, config["configurable"]["thread_id"], request, runtime.contract
+        ):
+            state = await graph.ainvoke({"request": request}, config=config)
+            if state.get("__interrupt__"):
+                decision = await approval_handler(state["__interrupt__"][0].value)
+                if isinstance(decision, ApprovalDecision):
+                    decision = decision.model_dump(mode="json")
+                state = await graph.ainvoke(Command(resume=decision), config=config)
         return state["result"]
 
 
@@ -173,6 +180,7 @@ def main(argv=None):
             ops_store=ops_store,
             approval_handler=console_approval if args.enable_ops else None,
             ablation=args.ablation,
+            trace_store=TraceStore(args.trace_db) if args.trace_db else None,
         )
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)

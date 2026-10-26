@@ -38,6 +38,7 @@ from pvdiag.mcp_servers.models import (
     TimeseriesRequest,
     TimeseriesResult,
 )
+from pvdiag.observability.tracing import mark_request_sent, observe
 
 CONTRACTS = {
     "list_devices": (SiteRequest, DevicesResult),
@@ -114,6 +115,14 @@ class MCPGateway:
             yield cls(clients, catalog, knowledge_source_sha256, allowed_tools)
 
     async def call(self, call: ToolCall, request: DiagRequest, scope: Scope | None, node: str):
+        with observe("tool", call.name, call.arguments, {"node": node}) as observation:
+            evidence, trace = await self._call(call, request, scope, node)
+            observation.update(
+                output=evidence, metadata={"error_code": trace.error}, success=trace.success
+            )
+            return evidence, trace
+
+    async def _call(self, call: ToolCall, request: DiagRequest, scope: Scope | None, node: str):
         start = perf_counter()
         try:
             allowed = {
@@ -148,6 +157,7 @@ class MCPGateway:
                         scope, field
                     ):
                         raise ValueError("sensor outside request scope")
+            mark_request_sent()
             response = await asyncio.wait_for(
                 self.clients[call.name].call_tool(
                     call.name, {"request": validated.model_dump(mode="json")}

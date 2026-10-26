@@ -1,6 +1,6 @@
 # PV Diagnosis Agent · 设计文档
 
-> 版本：v0.1（2026-10-24）· 进度更新：2026-10-26，规则诊断、BGE 检索、PostgresSaver、FastAPI/SSE/身份绑定审批与 Gradio 单页已验证；已补基线审核、rule-v2 六类开发对比及 A0–A3 消融执行边界，真实 LLM 消融与 Ragas 尚未完成，DeepSeek 单例已授权但缺本机凭据
+> 版本：v0.1（2026-10-24）· 进度更新：2026-10-26，规则诊断、BGE 检索、PostgresSaver、FastAPI/SSE/身份绑定审批与 Gradio 单页已验证；已补基线审核、rule-v2 六类开发对比、A0–A3 执行边界和 Langfuse 本地追踪/导出，云端验收、真实 LLM 消融与 Ragas 尚未完成，DeepSeek 单例已授权但缺本机凭据
 > 一句话：基于 LangGraph + MCP 的光伏电站时序故障诊断 Agent，在注入已知故障的公开数据上做可复现评测，并用固定评分器驱动 harness 自进化。
 
 ---
@@ -441,8 +441,9 @@ pv-diagnosis-agent/
 | 人工审批与模拟工单 | `interrupt` / `Command(resume=...)` 和本地 CLI 已接通；工单默认关闭，SQLite 持久化具体草案、人工决定和幂等工单，拒绝/篡改/重放路径已测试 |
 | 诊断持久化 | 已接真实 AsyncPostgresSaver、显式 schema 初始化、start/resume/show CLI、版本/数据绑定、活动锁及独立模型预算账本；受控审批已在不同 Python 进程间恢复，实际 M1 十场景保存/重开结果一致 |
 | 服务化 | FastAPI/SSE、服务端 profile 白名单、开发身份/角色、请求归属、幂等诊断、持久事件重放及身份绑定审批已验证；默认仅监听本机，Gradio 接入见下节，尚无生产身份系统 |
-| M2 | 六类原语、短窗候选、领域核验、混合检索、审批及检查点/API 恢复已实现；正式正常/留出基准集、Ragas、Langfuse 与完整 LLM 消融尚未完成 |
+| M2 | 六类原语、短窗候选、领域核验、混合检索、审批及检查点/API 恢复已实现；正式正常/留出基准集、Ragas、Langfuse 云端验收与完整 LLM 消融尚未完成 |
 | 消融执行边界 | 已接 A0–A3 显式档位、统一固定摘要、网关工具白名单、隔离核验反馈、共享模型预算与恢复契约；271 项测试通过，新增 30 项离线边界/评测/真实 PostgreSQL 检查，不代表真实模型消融成绩 |
+| 可观测 | 模型、只读工具、审批后工单及 API 已接显式本地追踪；开发评测可生成 Dataset/Experiment 和固定评分导出；OTLP v4 / Dataset v2 / Scores 离线 HTTP 契约与真实 PostgreSQL 审批恢复已验证，真实 B0 十场景生成 101 条观察记录，尚未上传云端 |
 | M3–M4 | M4 的 Gradio 本机单页已接通；长期记忆、自进化、Docker Compose、README 和完整演示打包仍未完成，没有进化、泛化或完整消融结果 |
 
 ### 数据核验结论与处理边界
@@ -891,3 +892,33 @@ rule-v2 共 484 次只读工具调用（平均 8.07 次/场景，rule-v1 为 6.9
 真实 M1 十场景 B0 + domain 回归保存在 `data/eval/m1_ablation_runtime_regression/`，仍为根因/定位 10/10、时间窗 9/10、共 91 次只读工具调用，模型请求和未经审批写入均为零；本批运行时调整没有改变这些既有规则成绩。隔离 PostgreSQL 在验证后停止并核实无服务运行，未操作其他数据库。
 
 本机再次确认没有 `DEEPSEEK_API_KEY`，本批未调用真实模型。已有授权仅覆盖一个开发场景，不扩展为四档矩阵或整套开发集。正常基线仍待真实人工审核；F5 继续严格隔离目标设备，等待独立 POA 数据。Ragas/Langfuse、正式正常/留出评测、长期记忆与自进化仍待推进。
+
+### Langfuse 本地追踪、评测关联与显式同步（2026-10-26）
+
+`observability/` 新增本地可恢复追踪及 Langfuse 同步。单次诊断、持久 start/resume、开发集评测和 API serve 支持 `--trace-db <SQLite路径>`；未配置时沿用原有运行方式。配置后为每个诊断生成稳定 trace/root ID，用 ContextVar 隔离并发上下文，SQLite WAL 台账记录开始、结束、输入、输出、状态和元数据。记录过程不发出云端请求。
+
+- **覆盖调用链**：模型规划/假设/自评记为 generation；全部观测/知识工具及审批后的 `create_work_order` 记为 tool；bootstrap、固定摘要、被拒绝的工具尝试也保留记录。`request_sent` 区分进入传输的尝试和执行前拒绝，实际模型用量仍以独立模型账本为准。模型记录保留配置、实际返回模型名、调用序号、提供方原始 token 计数及缺失标记，不额外调用模型，不改变已有六次/4096 输出 token 上限。
+- **未知结果可见**：调用开始先落账，进程意外退出后仍保留未结束观察。导出以 `incomplete` / `duration_unknown` / `usage_missing` 标记，时戳占位不作为真实零延迟；不编造 token 或美元成本。正常调用保留完整跨度时戳，总根跨度可能包含人工审批等待，不能与模型跨度延迟混用。配置追踪后的落账异常会显式失败，不静默声称追踪成功。
+- **恢复边界**：PostgreSQL 运行 contract 绑定追踪台账路径摘要及可观测源码指纹。重新打开同一路径台账后，原 trace/root ID 保持一致；审批恢复继续在原 trace 中记工单调用，模型调用预算不会重置。已完成运行的读取不重新执行模型/工具，也不新建重复观察。切换或临时启停追踪配置会触发既有 context changed 拒绝。
+- **记录内容**：保留有界工具证据、发送给模型的提示和公开请求、结构化输出；凭据字段递归脱敏，过大输入/输出保留长度与内容摘要标记。认证头、API Bearer 值、环境配置和原始供应商异常正文不进入追踪。工具错误保留受控错误类型，审批观察仅使用动作/内容摘要与回执，不记录审批者的认证信息。追踪台账本身是本地诊断数据，应按具体导出内容审阅。
+- **评测与真值隔离**：原开发集预检、正常审核门槛、故障子集选择、观测冻结保持不变。`EvaluationRun` 以清单指纹、实际观测快照和选中场景派生 Dataset 身份，条目 input 只有公开 `DiagRequest`，标准答案放在独立 expectedOutput。每次评测生成唯一 Experiment；在诊断和固定评分完成后才关联 root，标准答案不进入模型或工具上下文。导出标准答案仅附着实验 root，实验/条目身份传播到其子观察；固定评分附着 root，明确标为 code scorer，并保存冻结评分器版本/指纹，不冒充 LLM Judge。
+- **已核对接口**：按 2026-10-26 的[官方 OpenAPI](https://cloud.langfuse.com/generated/api/openapi.yml)、[OTLP 属性映射](https://langfuse.com/integrations/native/opentelemetry)和[Experiment 映射](https://langfuse.com/integrations/native/opentelemetry/experiments)实现：`POST /api/public/otel/v1/traces`（OTLP/JSON、`x-langfuse-ingestion-version: 4`）、Dataset v2、Dataset items 与 Scores API。复用已有 HTTPX，无新增依赖。每个实验条目有独立 trace，实际 output 放 root observation；同步时使用服务端返回的 Dataset ID。
+- **同步边界**：`prepare` 生成可审阅 JSON，含源台账快照指纹；`upload` 要求具体 `--prepared` 文件、显式 `--allow-upload` 与项目凭据，发送前验证文件和当前台账完全一致，并绑定本次内存快照。后续新诊断不能悄悄加入已审阅包。HTTPS origin 不允许携带 URL 凭据，不跟随重定向。每批限制体积和条数，成功写入保存按项目/操作/内容绑定的本地回执；重开进程可跳过已确认的相同批次。已有 Dataset/条目的内容不一致时拒绝覆盖；HTTP 错误或无效响应不当作成功。OTLP 部分拒收或 Scores 的 207 会记录 partial 并停止，后续同步不自动重发该批，需先人工核对云端接受情况；`inspect` 可查看待核对的操作/内容摘要。`accepted` 只表示接口接受，不替代云端查询或仪表盘验收。
+
+```bash
+# 本地采集与制备；不使用云端凭据、不上传：
+.venv/bin/python -m pvdiag.eval.run_bench --verification domain --trace-db data/observability/m1_b0.sqlite3 --output data/eval/m1_tracing_regression
+.venv/bin/python -m pvdiag.observability inspect --trace-db data/observability/m1_b0.sqlite3
+.venv/bin/python -m pvdiag.observability prepare --trace-db data/observability/m1_b0.sqlite3 --output data/observability/m1_b0_langfuse_export.json
+
+# 获得具体上传授权并配置本机 .env 后，使用同一审阅包：
+# LANGFUSE_BASE_URL=所属区域的 HTTPS origin
+# LANGFUSE_PUBLIC_KEY、LANGFUSE_SECRET_KEY 仅放本机环境/.env，不放命令行或提交。
+.venv/bin/python -m pvdiag.observability upload --trace-db data/observability/m1_b0.sqlite3 --prepared data/observability/m1_b0_langfuse_export.json --allow-upload --output data/observability/m1_b0_upload_receipt.json
+```
+
+**真实开发数据收据**：`data/observability/m1_b0.sqlite3` 保存 M1 十场景的十个 root、91 个真实只读 MCP 观察，合计 **101 条观察、零 generation**；Dataset 十个条目、一个 Experiment、十份固定评分关联。已逐一核对工具记录数、标准答案、trace ID 与场景结果；`data/eval/m1_tracing_regression/` 仍为根因/定位 10/10、时间 IoU 达标 9/10、平均 9.1 次工具调用，未经审批写入为零。评分器 v1.2 未改，SHA-256 仍为 `03acd7aafa7b0d0eb83ea4120a3fd887b38a7ef5bc8298903c99edb740fc0670`。审阅包为 `data/observability/m1_b0_langfuse_export.json`；它是实际开发数据的本地同步准备结果，不是云端已接受的回执。
+
+**验证与待办**：全套 **290 个测试通过**，含新增十八项追踪/导出检查和一项带身份认证的 API 追踪检查；既有 PostgreSQL 用例扩展验证了六次离线 SDK 调用、断开连接后审批恢复、同一 trace 内真实工单调用，以及追踪配置变化的恢复拒绝。模型测试使用明确命名的离线 SDK，HTTP 同步使用契约传输替身；真实 MCP、SQLite、PostgreSQL、API/SSE 均运行验证，尚无真实 Langfuse Cloud 接收/仪表盘验收。Ruff、格式、依赖兼容、离线 lock 与差异空白检查通过，无新增依赖。隔离测试 PostgreSQL 已停止并核实无服务运行。
+
+本机未检测到 `DEEPSEEK_API_KEY`、`LANGFUSE_BASE_URL`、`LANGFUSE_PUBLIC_KEY` 或 `LANGFUSE_SECRET_KEY`；本批真实模型调用与云端写入均为零。已向用户请求只覆盖这份 B0 导出包的云端上传授权，收到授权且本机凭据可用后才能执行；不把 DeepSeek 单场景授权扩展到云端发布、批量模型或 Ragas Judge。真实模型消融、Ragas、正常基线人工审核、F5 独立 POA、正式留出/跨站评测、长期记忆、自进化与部署打包仍待推进。

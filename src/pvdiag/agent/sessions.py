@@ -15,6 +15,7 @@ from pvdiag.agent.runtime import SessionReply, open_runtime
 from pvdiag.agent.state import DiagRequest, RunResult
 from pvdiag.mcp_servers.pv_knowledge import add_knowledge_arguments, knowledge_from_args
 from pvdiag.mcp_servers.store import ObservationStore
+from pvdiag.observability.store import TraceStore
 
 
 def connection_setting(field):
@@ -72,6 +73,7 @@ async def execute(args):
             persistence=persistence,
             verification_mode=args.verification,
             ablation=args.ablation,
+            trace_store=TraceStore(args.trace_db) if args.trace_db else None,
         ) as runtime:
             if args.command == "start":
                 request = DiagRequest(

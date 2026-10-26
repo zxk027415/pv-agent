@@ -20,6 +20,7 @@ from pvdiag.mcp_servers.models import Model
 from pvdiag.mcp_servers.pv_analytics import create_server as analytics_server
 from pvdiag.mcp_servers.pv_data import create_server as data_server
 from pvdiag.mcp_servers.pv_knowledge import create_server as knowledge_server
+from pvdiag.observability.tracing import current_session, trace_session
 
 
 class SessionReply(Model):
@@ -33,7 +34,7 @@ def source_fingerprint():
     root = Path(__file__).resolve().parents[1]
     paths = sorted(
         path
-        for folder in ("agent", "mcp_servers", "ops", "knowledge")
+        for folder in ("agent", "mcp_servers", "ops", "knowledge", "observability")
         for path in (root / folder).glob("*.py")
     )
     paths.append(root / "data" / "normalize.py")
@@ -65,6 +66,7 @@ async def open_runtime(
     verification_mode=None,
     event_sink=None,
     ablation=None,
+    trace_store=None,
 ):
     policy, verification_mode = resolve_ablation(ablation, verification_mode)
     validate_ablation(policy, reasoner, knowledge_store, ops_store)
@@ -134,19 +136,39 @@ async def open_runtime(
             "max_calls": max_calls,
             "max_loops": max_loops,
             "ablation": policy.metadata() if policy else None,
+            "trace_store_sha256": hashlib.sha256(str(trace_store.path).encode()).hexdigest()
+            if trace_store
+            else None,
             "packages": packages,
             "python_version": platform.python_version(),
         }
-        yield DiagnosisRuntime(graph, reasoner, contract, persistence, event_sink)
+        yield DiagnosisRuntime(graph, reasoner, contract, persistence, event_sink, trace_store)
 
 
 class DiagnosisRuntime:
-    def __init__(self, graph, reasoner, contract, persistence, event_sink=None):
+    def __init__(self, graph, reasoner, contract, persistence, event_sink=None, trace_store=None):
         self.graph, self.reasoner = graph, reasoner
         self.contract, self.persistence = contract, persistence
         self.event_sink = event_sink
+        self.trace_store = trace_store
 
-    async def _execute(self, command, config):
+    async def _execute(self, command, config, request):
+        with trace_session(
+            self.trace_store, config["configurable"]["thread_id"], request, self.contract
+        ):
+            await self._drive(command, config)
+            if session := current_session():
+                snapshot = await self.graph.aget_state(config)
+                if not snapshot.values.get("result"):
+                    session.root.update(
+                        metadata={
+                            "phase": "awaiting_approval"
+                            if snapshot.tasks and any(t.interrupts for t in snapshot.tasks)
+                            else "interrupted"
+                        }
+                    )
+
+    async def _drive(self, command, config):
         if self.event_sink is None:
             await self.graph.ainvoke(command, config=config, durability="sync")
             return
@@ -206,7 +228,7 @@ class DiagnosisRuntime:
                 self.reasoner.max_model_calls if self.reasoner.metadata.get("mode") == "LLM" else 0,
             )
             await self._accounting(run_id)
-            await self._execute({"request": request}, config)
+            await self._execute({"request": request}, config, request)
             return await self.view(run_id)
 
     async def resume(self, run_id, decision=None):
@@ -236,5 +258,5 @@ class DiagnosisRuntime:
                 command = None
             else:
                 command = {"request": DiagRequest.model_validate(run["request"])}
-            await self._execute(command, config)
+            await self._execute(command, config, DiagRequest.model_validate(run["request"]))
             return await self.view(run_id)

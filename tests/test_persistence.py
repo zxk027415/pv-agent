@@ -14,6 +14,7 @@ from pvdiag.agent.persistence import PostgresStore, checkpoint_serializer
 from pvdiag.agent.rules import RuleReasoner
 from pvdiag.agent.runtime import open_runtime
 from pvdiag.agent.state import DiagRequest, Plan, Scope
+from pvdiag.observability.store import TraceStore
 from pvdiag.ops.store import WorkOrderStore
 
 
@@ -238,6 +239,16 @@ def test_changed_resume_context_is_rejected_before_advancing_the_graph(pg, tmp_p
                 runtime.contract["observation_source_sha256"] = "0" * 64
                 with pytest.raises(ValueError, match="context changed"):
                     await runtime.resume("bound-context")
+            async with open_runtime(
+                store,
+                RuleReasoner(),
+                persistence=persistence,
+                ops_store=ledger,
+                verification_mode="domain",
+                trace_store=TraceStore(tmp_path / "traces.sqlite3"),
+            ) as runtime:
+                with pytest.raises(ValueError, match="context changed"):
+                    await runtime.resume("bound-context")
         assert ledger.work_orders() == ledger.approvals() == []
 
     asyncio.run(verify())
@@ -389,6 +400,7 @@ def test_suspended_llm_run_restores_usage_without_resetting_the_six_call_budget(
     dsn, schema = pg
     store, request, _, _, _ = context(tmp_path, "F3")
     ledger = WorkOrderStore(tmp_path / "orders.sqlite3")
+    traces = TraceStore(tmp_path / "traces.sqlite3")
     attempts = []
 
     class StructuredOfflineSDK:
@@ -432,6 +444,7 @@ def test_suspended_llm_run_restores_usage_without_resetting_the_six_call_budget(
                 persistence=persistence,
                 ops_store=ledger,
                 verification_mode="domain",
+                trace_store=traces,
             ) as runtime,
         ):
             paused = await runtime.start("llm-approval", request)
@@ -440,7 +453,12 @@ def test_suspended_llm_run_restores_usage_without_resetting_the_six_call_budget(
             fresh = LLMReasoner("offline", max_model_calls=6)
             assert fresh.usage["model_calls"] == 0
             async with open_runtime(
-                store, fresh, persistence=persistence, ops_store=ledger, verification_mode="domain"
+                store,
+                fresh,
+                persistence=persistence,
+                ops_store=ledger,
+                verification_mode="domain",
+                trace_store=TraceStore(traces.path),
             ) as runtime:
                 proposal = paused.approval_request["proposal"]
                 result = await runtime.resume(
@@ -461,5 +479,12 @@ def test_suspended_llm_run_restores_usage_without_resetting_the_six_call_budget(
                 }
                 assert result.result.model["reported_models"] == ["structured-offline-fixture"]
                 assert len(attempts) == 6
+                spans = traces.all("span")
+                assert len({s["trace_id"] for s in spans}) == 1
+                assert len([s for s in spans if s["parent_id"] is None]) == 1
+                assert len([s for s in spans if s["type"] == "generation"]) == 6
+                assert len([s for s in spans if s["type"] == "tool"]) == len(result.result.trace)
+                assert any(s["name"] == "create_work_order" and s["success"] for s in spans)
+                assert result.result.observability["trace_id"] == spans[0]["trace_id"]
 
     asyncio.run(verify())

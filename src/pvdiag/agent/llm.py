@@ -9,6 +9,7 @@ import json
 from langchain.chat_models import init_chat_model
 
 from pvdiag.agent.state import DiagnosisReport, ModelReview, Plan
+from pvdiag.observability.tracing import mark_request_sent, observe
 
 
 class LLMReasoner:
@@ -90,6 +91,20 @@ class LLMReasoner:
                 self.metadata["reported_models"].append(reported)
 
     async def _call(self, schema, payload, prompt):
+        with observe(
+            "generation",
+            f"llm.{payload.get('task', 'structured')}",
+            {"system_prompt": prompt, "payload": payload},
+            {
+                "model": self.metadata["model"],
+                "provider": self.metadata["provider"],
+                "temperature": self.metadata["temperature"],
+                "max_output_tokens": 4096,
+            },
+        ) as observation:
+            return await self._invoke(schema, payload, prompt, observation)
+
+    async def _invoke(self, schema, payload, prompt, observation):
         if self.usage["model_calls"] >= self.max_model_calls:
             raise ValueError("model_call_budget_exhausted")
         serialized = json.dumps(payload, ensure_ascii=False, allow_nan=False)
@@ -105,6 +120,10 @@ class LLMReasoner:
                 raise RuntimeError("model_accounting_unavailable") from None
         self.usage["model_calls"] += 1
         try:
+            observation.update(
+                metadata={"model_call_ordinal": reservation or self.usage["model_calls"]}
+            )
+            mark_request_sent()
             response = await asyncio.wait_for(
                 self.model.with_structured_output(
                     schema, include_raw=True, method="function_calling"
@@ -118,8 +137,17 @@ class LLMReasoner:
         usage = raw.usage_metadata
         reported = raw.response_metadata.get("model_name") or raw.response_metadata.get("model")
         await self._settle(reservation, usage, reported)
+        observation.update(
+            metadata={
+                "usage": usage,
+                "usage_missing": usage is None,
+                "reported_model": reported,
+                "model_call_number": self.usage["model_calls"],
+            }
+        )
         if response["parsing_error"] or response["parsed"] is None:
             raise ValueError("invalid structured model output")
+        observation.update(output=response["parsed"])
         return response["parsed"]
 
     async def plan(self, state, tools, prompt):

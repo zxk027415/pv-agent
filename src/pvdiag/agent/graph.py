@@ -32,6 +32,7 @@ from pvdiag.agent.state import (
     WorkOrderDraft,
 )
 from pvdiag.agent.verification import check_domain
+from pvdiag.observability.tracing import current_session
 
 DEFAULT_PROMPT = Path(__file__).resolve().parents[3] / "harness" / "system_prompt.md"
 DEFAULT_REVIEW_PROMPT = DEFAULT_PROMPT.with_name("verification_prompt.md")
@@ -417,6 +418,19 @@ def build_graph(
             ops_policy_sha256=ops_policy_sha,
             ablation=ablation_record,
         )
+        if session := current_session():
+            result.observability = session.receipt()
+            session.root.update(
+                output={"report": result.report, "model_usage": result.model_usage},
+                metadata={
+                    "model": result.model,
+                    "ablation": result.ablation,
+                    "harness_sha256": result.harness_sha256,
+                    "knowledge_source_sha256": result.knowledge_source_sha256,
+                    "phase": "completed",
+                    "usd_cost": None,
+                },
+            )
         return {"verdict": verdict, "result": result}
 
     graph = StateGraph(DiagState)

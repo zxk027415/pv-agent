@@ -17,6 +17,7 @@ from pvdiag.agent.rules import RuleReasoner
 from pvdiag.api.app import create_app
 from pvdiag.api.config import Authentication, Profile
 from pvdiag.api.store import ApiStore
+from pvdiag.observability.store import TraceStore, canonical
 
 
 def identities():
@@ -100,6 +101,48 @@ def test_authentication_has_no_default_token_and_never_uses_query_credentials():
     assert auth.authenticate("controlled-owner-fixture") is None
     assert auth.authenticate("Bearer wrong-fixture") is None
     assert auth.authenticate(headers()["Authorization"]).subject == "owner"
+
+
+def test_api_trace_survives_approval_resume_and_excludes_authentication(api_fixture, tmp_path):
+    traces = TraceStore(tmp_path / "api-traces.sqlite3")
+
+    async def verify():
+        app = await application(api_fixture, trace_store=traces)
+        request = api_fixture[3]
+        async with (
+            app.router.lifespan_context(app),
+            httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://fixture"
+            ) as client,
+        ):
+            response = await client.post(
+                "/diagnose",
+                headers=headers(key="controlled-trace-0001"),
+                json={"profile_id": "fixture", "request": request.model_dump(mode="json")},
+            )
+            assert response.status_code == 200
+            pending = messages(response.text)[-1]["data"]["approval_request"]["proposal"]
+            roots = [s for s in traces.all("span") if s["parent_id"] is None]
+            assert len(roots) == 1 and roots[0]["metadata"]["phase"] == "awaiting_approval"
+            run_id = response.headers["x-run-id"]
+            response = await client.post(
+                f"/runs/{run_id}/approve",
+                headers=headers("reviewer"),
+                json={
+                    "approved": False,
+                    "action_id": pending["action_id"],
+                    "payload_sha256": pending["payload_sha256"],
+                },
+            )
+            assert response.status_code == 200
+            result = messages(response.text)[-1]["data"]["result"]
+            assert result["action_outcome"]["status"] == "rejected"
+            assert result["observability"]["trace_id"] == roots[0]["trace_id"]
+            assert len(traces.all("span")) == len(result["trace"]) + 1
+            assert "controlled-owner-fixture" not in canonical(traces.snapshot())
+            assert "controlled-reviewer-fixture" not in canonical(traces.snapshot())
+
+    asyncio.run(verify())
 
 
 def test_http_diagnosis_progress_identity_bound_approval_and_idempotent_retries(api_fixture):

@@ -10,6 +10,7 @@ from pvdiag.agent.sessions import connection_setting
 from pvdiag.api.app import create_app
 from pvdiag.api.config import Authentication, load_profiles
 from pvdiag.api.store import ApiStore
+from pvdiag.observability.store import TraceStore
 
 
 def main(argv=None):
@@ -23,6 +24,7 @@ def main(argv=None):
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--max-active", type=int, default=2)
+    parser.add_argument("--trace-db", type=Path)
     args = parser.parse_args(argv)
     try:
         dsn = connection_setting(args.dsn_env)
@@ -42,7 +44,12 @@ def main(argv=None):
         authentication = Authentication(json.loads(connection_setting(args.identities_env)))
         profiles = load_profiles(args.profiles, allow_model_calls=args.allow_model_calls)
         app = create_app(
-            profiles, authentication, dsn, schema=args.schema, max_active=args.max_active
+            profiles,
+            authentication,
+            dsn,
+            schema=args.schema,
+            max_active=args.max_active,
+            trace_store=TraceStore(args.trace_db) if args.trace_db else None,
         )
     except (ValueError, RuntimeError, OSError):
         parser.exit(

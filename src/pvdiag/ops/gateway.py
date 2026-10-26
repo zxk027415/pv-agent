@@ -6,6 +6,7 @@ from time import perf_counter
 from fastmcp import Client
 
 from pvdiag.agent.state import CreateWorkOrderRequest, ToolTrace, WorkOrderReceipt
+from pvdiag.observability.tracing import mark_request_sent, observe
 
 
 class OpsGateway:
@@ -27,6 +28,22 @@ class OpsGateway:
             yield cls(client, store)
 
     async def create(self, proposal, approval):
+        with observe(
+            "tool",
+            "create_work_order",
+            {
+                "action_id": proposal.action_id,
+                "payload_sha256": proposal.payload_sha256,
+            },
+            {"node": "act"},
+        ) as observation:
+            receipt, trace = await self._create(proposal, approval)
+            observation.update(
+                output=receipt, metadata={"error_code": trace.error}, success=trace.success
+            )
+            return receipt, trace
+
+    async def _create(self, proposal, approval):
         started = perf_counter()
         request = None
         try:
@@ -43,6 +60,7 @@ class OpsGateway:
                 payload_sha256=proposal.payload_sha256,
                 approval_id=approval.approval_id,
             )
+            mark_request_sent()
             response = await self.client.call_tool(
                 "create_work_order", {"request": request.model_dump(mode="json")}
             )

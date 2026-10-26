@@ -35,12 +35,13 @@ class ApprovalInput(Model):
 
 
 class ApiService:
-    def __init__(self, persistence, profiles, max_active):
+    def __init__(self, persistence, profiles, max_active, trace_store=None):
         self.persistence, self.profiles = persistence, profiles
         self.repository = ApiStore(persistence)
         self.max_active = max_active
         self.jobs = {}
         self.lock = asyncio.Lock()
+        self.trace_store = trace_store
 
     async def inspect(self, row):
         try:
@@ -78,6 +79,7 @@ class ApiService:
                     persistence=self.persistence,
                     verification_mode=profile.config.verification,
                     event_sink=event_sink,
+                    trace_store=self.trace_store,
                 ) as runtime:
                     try:
                         await self.persistence.get_run(run_id)
@@ -140,6 +142,7 @@ def create_app(
     max_active=2,
     poll_interval=0.1,
     heartbeat_interval=5,
+    trace_store=None,
 ):
     if not 1 <= max_active <= 16:
         raise ValueError("invalid API worker limit")
@@ -149,7 +152,7 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app):
         async with PostgresStore.open(dsn, schema=schema) as persistence:
-            service = ApiService(persistence, profiles, max_active)
+            service = ApiService(persistence, profiles, max_active, trace_store)
             await service.repository.ensure_initialized()
             app.state.service = service
             try:
