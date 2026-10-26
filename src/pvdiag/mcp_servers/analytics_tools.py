@@ -44,7 +44,9 @@ class AnalyticsTools:
             raw = pd.DataFrame(index=power.index)
             for device in request.device_ids:
                 peers = power.drop(columns=device)
-                median = peers.median(axis=1).where(peers.notna().sum(axis=1) >= 2)
+                comparable = peers.notna().sum(axis=1) >= 2
+                median = pd.Series(float("nan"), index=peers.index)
+                median.loc[comparable] = peers.loc[comparable].median(axis=1)
                 raw[device] = power[device].div(median.where(median > 0)).where(daylight)
             return power, daylight, raw
 
