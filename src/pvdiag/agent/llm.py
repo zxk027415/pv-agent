@@ -168,6 +168,7 @@ class LLMReasoner:
                     {"name": t.name, "error": t.error} for t in state["trace"] if not t.success
                 ],
                 "tools": list(tools.values()),
+                **({"memory": state["memory"]} if state.get("memory") is not None else {}),
             },
             prompt,
         )
@@ -179,6 +180,7 @@ class LLMReasoner:
                 "task": "hypothesize",
                 "request": state["request"].model_dump(mode="json"),
                 "evidence": state["evidence"],
+                **({"memory": state["memory"]} if state.get("memory") is not None else {}),
             },
             prompt,
         )

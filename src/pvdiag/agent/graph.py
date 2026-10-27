@@ -50,9 +50,10 @@ def build_graph(
     review_prompt_path=DEFAULT_REVIEW_PROMPT,
     ops_gateway=None,
     ablation=None,
+    memory_view=None,
 ):
     policy, verification_mode = resolve_ablation(ablation, verification_mode)
-    validate_ablation(policy, reasoner, gateway.knowledge_source_sha256, ops_gateway)
+    validate_ablation(policy, reasoner, gateway.knowledge_source_sha256, ops_gateway, memory_view)
     if policy and gateway.allowed_tools != policy.model_tools:
         raise ValueError("gateway permissions differ from the ablation policy")
     if not 2 <= max_calls <= 100 or not 1 <= max_loops <= 3:
@@ -150,6 +151,7 @@ def build_graph(
             "pending_action": None,
             "approval": None,
             "action_outcome": None,
+            "memory": None,
         }
 
     async def fixed_summary(state):
@@ -179,6 +181,9 @@ def build_graph(
                 key: state[key] for key in ("request", "scope", "evidence", "trace", "loops")
             } | {"critique": [], "verification": []}
         return state
+
+    async def recall_memory(state):
+        return {"memory": await memory_view.recall(state["request"], state["evidence"])}
 
     async def plan(state):
         try:
@@ -417,6 +422,7 @@ def build_graph(
             action_outcome=state.get("action_outcome"),
             ops_policy_sha256=ops_policy_sha,
             ablation=ablation_record,
+            memory=state.get("memory"),
         )
         if session := current_session():
             result.observability = session.receipt()
@@ -437,6 +443,7 @@ def build_graph(
     for name, node in (
         ("guard_in", guard_in),
         ("fixed_summary", fixed_summary),
+        ("recall_memory", recall_memory),
         ("plan", plan),
         ("investigate", investigate),
         ("hypothesize", hypothesize),
@@ -450,7 +457,8 @@ def build_graph(
         graph.add_node(name, node)
     graph.add_edge(START, "guard_in")
     graph.add_edge("guard_in", "fixed_summary" if policy else "plan")
-    graph.add_edge("fixed_summary", "hypothesize" if policy and policy.level == "A0" else "plan")
+    graph.add_edge("fixed_summary", "recall_memory" if memory_view else "hypothesize" if policy and policy.level == "A0" else "plan")
+    graph.add_edge("recall_memory", "plan")
     graph.add_edge("plan", "investigate")
     graph.add_edge("investigate", "hypothesize")
     graph.add_edge("hypothesize", "verify")

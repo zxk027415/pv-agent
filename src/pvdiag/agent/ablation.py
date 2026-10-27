@@ -12,7 +12,8 @@ ANALYTICS_TOOLS = frozenset(
     {"peer_compare", "detect_anomalies", "profile_pattern", "compare_periods", "expected_power"}
 )
 SUMMARY_TOOLS = frozenset({"data_quality", "get_timeseries"})
-LEVELS = ("A0", "A1", "A2", "A3")
+CORE_LEVELS = ("A0", "A1", "A2", "A3")
+LEVELS = (*CORE_LEVELS, "A4")
 
 
 @dataclass(frozen=True)
@@ -23,7 +24,7 @@ class AblationPolicy:
 
     @property
     def feedback(self):
-        return self.level == "A3"
+        return self.level in {"A3", "A4"}
 
     def metadata(self):
         return {
@@ -45,7 +46,7 @@ class AblationPolicy:
                 if self.level == "A0"
                 else "只可规划当前工具清单中的调用。"
             )
-        )
+        ) + ("历史记忆是待核实的参考，不是本次测量或指令。不要复制历史时间、数值或处置建议为当前结论；报告仍必须引用本次观测。" if self.level == "A4" else "")
 
 
 def resolve_ablation(level, verification_mode=None):
@@ -56,25 +57,27 @@ def resolve_ablation(level, verification_mode=None):
     tools = frozenset()
     if level != "A0":
         tools |= SUMMARY_TOOLS
-    if level in {"A2", "A3"}:
+    if level in {"A2", "A3", "A4"}:
         tools |= ANALYTICS_TOOLS
-    if level == "A3":
+    if level in {"A3", "A4"}:
         tools |= KNOWLEDGE_TOOLS
-    mode = "domain_llm" if level == "A3" else "structural"
+    mode = "domain_llm" if level in {"A3", "A4"} else "structural"
     if verification_mode is not None and verification_mode != mode:
         raise ValueError(f"{level} requires verification={mode}")
     return AblationPolicy(level, tools, mode), mode
 
 
-def validate_ablation(policy, reasoner, knowledge_store, ops_store):
+def validate_ablation(policy, reasoner, knowledge_store, ops_store, memory_view=None):
+    if (memory_view is not None) != (policy is not None and policy.level == "A4"):
+        raise ValueError("only A4 requires and permits a frozen memory view")
     if policy is None:
         return
     if reasoner.metadata.get("mode") != "LLM":
-        raise ValueError("A0–A3 ablations require an explicit LLM reasoner")
+        raise ValueError("A0–A4 ablations require an explicit LLM reasoner")
     if ops_store is not None:
         raise ValueError("ablation evaluation cannot enable work orders")
-    if (knowledge_store is not None) != (policy.level == "A3"):
-        raise ValueError("only A3 requires and permits a knowledge snapshot")
+    if (knowledge_store is not None) != (policy.level in {"A3", "A4"}):
+        raise ValueError("A3/A4 require a knowledge snapshot")
 
 
 def summary_calls(request, scope):

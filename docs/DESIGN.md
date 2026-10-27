@@ -424,13 +424,13 @@ pv-diagnosis-agent/
 
 ---
 
-## 17. 开发记录（更新至 2026-10-26）
+## 17. 开发记录（更新至 2026-10-27）
 
 ### 当前进度
 
 | 模块 | 可核验状态 |
 |---|---|
-| 工程与下载 | 现有 Python 3.11 / uv 配置、匿名 S3 下载器；下载器原有 4 个测试通过。开始本轮时，这些文件尚未提交，本轮保留其工作区状态 |
+| 工程与下载 | Python 3.11 / uv 配置、锁文件与匿名 S3 下载器已于 2026-10-27 补交入库（此前一直只在工作区）；下载器 4 个测试通过，离线 lock 检查一致 |
 | 标准化与数据卡 | 新增 `normalize.py`、`datacard.py`；修正 `.gitignore`，只忽略仓库根目录 `/data/`，避免漏掉数据处理源码 |
 | 2107 实际数据验证 | 原始 electrical、irradiance、environment、meter 四份 CSV；筛选 UTC `[2019-01-01, 2021-01-01)`，生成 **5,383,405** 条长表记录、24 台逆变器及电表/气象测点 |
 | 基线筛查与模拟 | 六类注入及双故障、真值与数据划分校验已实现，划分现在包含 F5 传感器目标；80 个 M2 候选已逐个重建核对并绑定 20 份原始基线审核包，实际人工接受数仍为零，未注入候选不能作为正常真值 |
@@ -445,7 +445,7 @@ pv-diagnosis-agent/
 | 消融执行边界 | 已接 A0–A3 显式档位、统一固定摘要、网关工具白名单、隔离核验反馈、共享模型预算与恢复契约；271 项测试通过，新增 30 项离线边界/评测/真实 PostgreSQL 检查，不代表真实模型消融成绩 |
 | 可观测 | 模型、只读工具、审批后工单及 API 已接显式本地追踪；开发评测可生成 Dataset/Experiment 和固定评分导出；OTLP v4 / Dataset v2 / Scores 离线 HTTP 契约与真实 PostgreSQL 审批恢复已验证，真实 B0 十场景生成 101 条观察记录，尚未上传云端 |
 | Ragas | 已接原生 context precision/recall/faithfulness、独立回答/Judge 预算、可恢复缓存及本地追踪；BM25/BGE 三十题输入包已生成，每套九十段上下文，原生算法的离线契约已验证；尚无真实 Judge 质量分数，参考答案仍未经独立审核 |
-| M3–M4 | M4 的 Gradio 本机单页已接通；长期记忆、自进化、Docker Compose、README 和完整演示打包仍未完成，没有进化、泛化或完整消融结果 |
+| M3–M4 | 长期记忆 `PgVectorStore` 与 A4 档位已接入单次诊断、持久会话和开发集评测，真实 pgvector + BGE 端到端验证通过，但没有真实 A4 成绩；M4 的 Gradio 本机单页已接通；自进化、OpenViking、Docker Compose、README 和完整演示打包仍未完成 |
 
 ### 数据核验结论与处理边界
 
@@ -957,3 +957,27 @@ HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 .venv/bin/python -m pvdiag.eval.ragas pr
 **验证结果**：全套 **312 项 pytest 通过**，新增二十二项检查；其中一个用例在锁定的独立环境执行 **九项原生 Ragas 子检查**，拦截网络连接与 DNS，实际外部网络尝试为零。覆盖原生公式、生成器标签隔离、完整/部分结果恢复、未知用量与角色预算、预算不可重置/扩大、非法二元值、遗漏 faithfulness 陈述、NaN/空上下文、跨题提示冻结，以及来源/配置/标签/片段篡改拒绝。真实 LangChain/OpenAI 兼容适配器额外完成五类结构化 schema 绑定，未发送模型请求。已有真实 PostgreSQL、API、UI、审批、知识与规则检查同时通过；独立测试 PostgreSQL 在验证后停止并核实。Ruff、格式、主环境/评测环境依赖兼容、离线 lock 与差异空白检查通过。故障评分器 SHA-256 仍为 `03acd7aafa7b0d0eb83ea4120a3fd887b38a7ef5bc8298903c99edb740fc0670`。
 
 本机复查仍无 DeepSeek 凭据，本批实际回答生成/Judge 付费调用均为零。离线子检查中的 SDK 输出及 token 值是受控测试数据，只证明执行/计费边界与原生公式调用，不代表真实问答质量。现有 DeepSeek 授权仍仅覆盖一个故障开发场景、最多六次诊断模型调用，未消耗；Ragas 回答生成/Judge 需要另行授权，Langfuse 的具体 B0 上传授权仍待用户决定。参考答案的独立审核、真实 Judge、真实 A0–A3、正常/留出/跨站数据、F5 独立传感器、长期记忆、自进化和部署打包仍未完成，整体目标保持推进中。
+
+### 长期记忆 MemoryStore 与 A4（2026-10-27）
+
+`memory/` 实现 §7 的长期案例与经验记忆（pgvector 保底实现，OpenViking 尚未验证），并将其作为 §9.3 的 A4 档位接入。A4 = A3 的全部工具与 `domain_llm` 反馈 + 一个只读、显式冻结版本的记忆视图。
+
+- **写入只来自开发集**：`add_case` 只接受全部场景均为 `dev` 的清单；未审核的原始基线候选、`evaluation_eligible=false` 场景拒绝写入，正常场景或已审核清单必须提供原审核包。写入前重新核验每条证据的内容 ID、工具契约、单一观测快照、设备目录及报告引用/范围守卫，再用固定评分器 v1.2 计算 `is_correct`（根因+定位全对、时间窗全中、数字声明全部有效、零未审批写入）。案例身份为内容 SHA-256，重复写入幂等，内容冲突报错。
+- **经验必须人工审核**：`add-lesson` 只读取 title/text/source_case_ids 草稿，终端展示后输入 accept/reject 及理由才写入，审核人取本机用户；引用的支持案例必须已存在。**召回只返回 accepted 经验**；rejected 经验保留供自进化去重，不作为诊断参考。
+- **召回不暴露真值**：返回给模型的案例只含历史请求窗口、历史预测摘要/发现与 `matched_development_reference` 标记，不含场景 ID、注入参数、真值时间窗或旧证据 ID，并标注“历史模型预测，不是本次测量或现场确认”；A4 提示词另要求不得把历史时间、数值或处置建议当作当前结论。同一站点且与当前请求窗口重叠的案例，以及以此类案例为来源的经验，在 SQL 中排除。
+- **版本冻结**：记忆表为追加写、全局递增 revision。A4 必须显式指定 `--memory-revision`，视图快照绑定 store ID、revision、内容 SHA-256、嵌入模型身份（BGE 快照文件哈希、维度、前缀、库版本）与 PostgreSQL/pgvector 版本；每次召回在 REPEATABLE READ 只读事务中复核快照，后续写入不影响已冻结版本。快照写入运行 contract，持久会话恢复时一并比对。连接默认只读；建表/扩展须显式 `init`。
+- **图接入**：A4 在 `fixed_summary` 之后、`plan` 之前执行一次 `recall_memory`，查询文本为请求问题 + 固定摘要中的质量统计，最多 3 条案例 + 3 条经验、合计 6,000 字符；规划与假设模型输入均带 `memory`，结果写入 `RunResult.memory`。A0–A3 和非消融运行不接受记忆视图。CLI（单次诊断、sessions、run_bench）新增 `--memory-revision`、`--memory-embedding-path`、`--memory-schema`、`--memory-dsn-env`（DSN 只从环境变量或忽略的 `.env` 读取）。修复 run_bench 原先只允许 A3 携带知识快照、导致 A4 无法启动的检查。
+
+```bash
+# 记忆库管理（DSN 放在 PVDIAG_MEMORY_DSN；写入需要显式子命令）：
+.venv/bin/python -m pvdiag.memory init --embedding-path data/models/bge-small-zh-v1.5
+.venv/bin/python -m pvdiag.memory add-case --embedding-path data/models/bge-small-zh-v1.5 --manifest bench/m1_smoke.json --scenario-id <开发场景> --run <RunResult.json>
+.venv/bin/python -m pvdiag.memory add-lesson --embedding-path data/models/bge-small-zh-v1.5 --file <草稿.json>
+.venv/bin/python -m pvdiag.memory show --embedding-path data/models/bge-small-zh-v1.5 [--revision N]
+# A4 开发集评测（需 LLM 授权；本批未执行）：
+# ... -m pvdiag.eval.run_bench --mode llm --allow-model-calls --ablation A4 --knowledge-root kb --memory-revision N --memory-embedding-path data/models/bge-small-zh-v1.5
+```
+
+**验证结果**：全套 **321 项 pytest 通过、0 跳过**（新增 9 项；本批在 `/tmp` 临时初始化的隔离 PostgreSQL 17.11 + pgvector 0.8.7 上运行了全部真实 PostgreSQL 用例，验证后已停止并删除）。新增检查覆盖向量归一化与非法嵌入、经验审核字段、开发案例准入与真值不外露、留出/未审核/篡改证据拒绝、A4 档位矩阵、A4 图路径（记忆在固定摘要后召回、A3 输入不含记忆、两档固定摘要指纹一致）、评测与 CLI 的配置在任何取数/建模前拒绝、未审核经验不连接数据库，以及真实 pgvector 的显式初始化、只读拒写、嵌入身份变更拒绝、幂等写入、冻结 revision 召回、重叠窗口排除和 rejected 经验不召回。另用真实本地 BGE（512 维）临时走通 init → add-case → show → 冻结视图召回，未入库。Ruff 通过，未增加依赖。故障评分器 SHA-256 仍为 `03acd7aafa7b0d0eb83ea4120a3fd887b38a7ef5bc8298903c99edb740fc0670`。
+
+**局限**：本批没有真实 LLM 调用，**没有 A4 成绩或 A3→A4 收益结论**。A4 在开发集上召回的是其他开发场景的已评分案例，只排除同站重叠窗口，开发集分数不代表留出泛化，run_bench 摘要已写入该说明；留出集评测入口仍未开放，届时须冻结记忆版本且不回写。召回查询目前仅用问题与质量统计，故障语义较弱，检索质量未评估；BGE 编码为同步调用，在 API 服务中会阻塞事件循环，API 尚未开放 A4 profile。OpenViking、自进化循环（A5）、场景生成器与 9069 跨站仍未开始。

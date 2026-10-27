@@ -10,7 +10,8 @@ from test_agent import observation as observation  # noqa: PLC0414 -- re-export 
 from test_agent import request
 
 from pvdiag.agent.__main__ import reasoner_from_args, run_diagnosis
-from pvdiag.agent.ablation import LEVELS, resolve_ablation
+from pvdiag.agent.ablation import CORE_LEVELS as LEVELS
+from pvdiag.agent.ablation import resolve_ablation
 from pvdiag.agent.gateway import MCPGateway
 from pvdiag.agent.llm import LLMReasoner
 from pvdiag.agent.rules import RuleReasoner
@@ -286,7 +287,7 @@ def test_bad_configuration_fails_before_tools_or_model_requests(observation, mon
     elif case == "verification":
         options["verification_mode"] = "domain"
     elif case == "level":
-        options["ablation"] = "A4"
+        options["ablation"] = "A5"
 
     def forbidden(*args):
         pytest.fail("invalid configuration must fail before mounting tools")

@@ -22,6 +22,7 @@ from pvdiag.mcp_servers.pv_knowledge import (
     knowledge_from_args,
 )
 from pvdiag.mcp_servers.store import ObservationStore
+from pvdiag.memory.cli import add_memory_arguments, memory_from_args
 from pvdiag.observability.store import TraceStore
 from pvdiag.observability.tracing import trace_session
 
@@ -32,7 +33,7 @@ def reasoner_from_args(args):
     )
     if args.mode == "b0":
         if policy:
-            raise ValueError("A0–A3 require --mode llm")
+            raise ValueError("A0–A4 require --mode llm")
         return RuleReasoner()
     if not args.allow_model_calls:
         raise ValueError("LLM mode requires --allow-model-calls; no model request was sent")
@@ -71,7 +72,8 @@ def add_model_arguments(parser):
         choices=["structural", "domain", "domain_llm"],
         help="default: structural; A3 fixes this to domain_llm",
     )
-    parser.add_argument("--ablation", choices=LEVELS, help="enforce an A0–A3 experiment policy")
+    parser.add_argument("--ablation", choices=LEVELS, help="enforce an A0–A4 experiment policy")
+    add_memory_arguments(parser)
     parser.add_argument(
         "--trace-db", type=Path, help="explicitly record a local Langfuse trace outbox"
     )
@@ -95,6 +97,7 @@ async def run_diagnosis(
     approval_handler=None,
     ablation=None,
     trace_store=None,
+    memory_view=None,
 ):
     if (ops_store is None) != (approval_handler is None):
         raise ValueError("operations require an explicit trusted human approval handler")
@@ -108,6 +111,7 @@ async def run_diagnosis(
         ops_store=ops_store,
         ablation=ablation,
         trace_store=trace_store,
+        memory_view=memory_view,
     ) as runtime:
         graph = runtime.graph
         config = {"configurable": {"thread_id": str(uuid4())}, "recursion_limit": 40}
@@ -170,19 +174,24 @@ def main(argv=None):
         from pvdiag.ops.store import WorkOrderStore
 
         ops_store = WorkOrderStore(args.ops_db or Path("data/ops/work_orders.sqlite3"))
-    result = asyncio.run(
-        run_diagnosis(
-            ObservationStore(args.observations, args.metadata),
-            request,
-            reasoner,
-            verification_mode=args.verification,
-            knowledge_store=knowledge_from_args(args),
-            ops_store=ops_store,
-            approval_handler=console_approval if args.enable_ops else None,
-            ablation=args.ablation,
-            trace_store=TraceStore(args.trace_db) if args.trace_db else None,
-        )
-    )
+    knowledge_store = knowledge_from_args(args)
+
+    async def diagnose():
+        async with memory_from_args(args) as memory_view:
+            return await run_diagnosis(
+                ObservationStore(args.observations, args.metadata),
+                request,
+                reasoner,
+                verification_mode=args.verification,
+                knowledge_store=knowledge_store,
+                ops_store=ops_store,
+                approval_handler=console_approval if args.enable_ops else None,
+                ablation=args.ablation,
+                trace_store=TraceStore(args.trace_db) if args.trace_db else None,
+                memory_view=memory_view,
+            )
+
+    result = asyncio.run(diagnose())
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(result.model_dump_json(indent=2) + "\n")
     print(

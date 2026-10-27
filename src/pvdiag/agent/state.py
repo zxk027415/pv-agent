@@ -267,6 +267,7 @@ class RunResult(Model):
     ops_policy_sha256: str | None = None
     ablation: dict | None = None
     observability: dict | None = None
+    memory: dict | None = None
 
 
 class DiagState(TypedDict, total=False):
@@ -284,3 +285,4 @@ class DiagState(TypedDict, total=False):
     pending_action: PendingAction | None
     approval: ApprovalRecord | None
     action_outcome: ActionOutcome | None
+    memory: dict | None

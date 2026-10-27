@@ -65,7 +65,9 @@ async def execute(args):
             from pvdiag.ops.store import WorkOrderStore
 
             ops = WorkOrderStore(args.ops_db or Path("data/ops/work_orders.sqlite3"))
-        async with open_runtime(
+        from pvdiag.memory.cli import memory_from_args
+
+        async with memory_from_args(args) as memory_view, open_runtime(
             ObservationStore(args.observations, args.metadata),
             reasoner_from_args(args),
             knowledge_store=knowledge_from_args(args),
@@ -74,6 +76,7 @@ async def execute(args):
             verification_mode=args.verification,
             ablation=args.ablation,
             trace_store=TraceStore(args.trace_db) if args.trace_db else None,
+            memory_view=memory_view,
         ) as runtime:
             if args.command == "start":
                 request = DiagRequest(

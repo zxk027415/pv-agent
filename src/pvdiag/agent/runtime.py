@@ -34,7 +34,7 @@ def source_fingerprint():
     root = Path(__file__).resolve().parents[1]
     paths = sorted(
         path
-        for folder in ("agent", "mcp_servers", "ops", "knowledge", "observability")
+        for folder in ("agent", "mcp_servers", "ops", "knowledge", "observability", "memory")
         for path in (root / folder).glob("*.py")
     )
     paths.append(root / "data" / "normalize.py")
@@ -67,14 +67,15 @@ async def open_runtime(
     event_sink=None,
     ablation=None,
     trace_store=None,
+    memory_view=None,
 ):
     policy, verification_mode = resolve_ablation(ablation, verification_mode)
-    validate_ablation(policy, reasoner, knowledge_store, ops_store)
+    validate_ablation(policy, reasoner, knowledge_store, ops_store, memory_view)
     async with AsyncExitStack() as stack:
         reader = await stack.enter_async_context(
             MCPGateway.connect(
                 data_server(store),
-                analytics_server(store) if policy is None or policy.level in {"A2", "A3"} else None,
+                analytics_server(store) if policy is None or policy.level in {"A2", "A3", "A4"} else None,
                 knowledge_server(knowledge_store) if knowledge_store else None,
                 knowledge_source_sha256=knowledge_store.source_sha256 if knowledge_store else None,
                 allowed_tools=policy.model_tools if policy else None,
@@ -97,6 +98,7 @@ async def open_runtime(
             verification_mode=verification_mode,
             ops_gateway=writer,
             ablation=ablation,
+            memory_view=memory_view,
         )
         packages = {}
         for name in (
@@ -136,6 +138,7 @@ async def open_runtime(
             "max_calls": max_calls,
             "max_loops": max_loops,
             "ablation": policy.metadata() if policy else None,
+            "memory": memory_view.snapshot.model_dump(mode="json") | {"sha256": memory_view.snapshot.sha256} if memory_view else None,
             "trace_store_sha256": hashlib.sha256(str(trace_store.path).encode()).hexdigest()
             if trace_store
             else None,

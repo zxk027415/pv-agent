@@ -14,6 +14,7 @@ from pvdiag.agent.state import DiagRequest
 from pvdiag.eval.scorer import aggregate, score_case
 from pvdiag.mcp_servers.pv_knowledge import add_knowledge_arguments, knowledge_from_args
 from pvdiag.mcp_servers.store import ObservationStore
+from pvdiag.memory.cli import memory_from_args
 from pvdiag.observability.evaluation import EvaluationRun
 from pvdiag.observability.store import TraceStore
 
@@ -31,10 +32,13 @@ async def run_benchmark(
     faults_only=False,
     ablation=None,
     trace_store=None,
+    memory_view=None,
 ):
     policy, verification_mode = resolve_ablation(ablation, verification_mode)
-    if policy and (knowledge_store is not None) != (policy.level == "A3"):
-        raise ValueError("only A3 requires and permits a knowledge snapshot")
+    if policy and (knowledge_store is not None) != (policy.level in {"A3", "A4"}):
+        raise ValueError("A3/A4 require a knowledge snapshot")
+    if (memory_view is not None) != (policy is not None and policy.level == "A4"):
+        raise ValueError("only A4 requires and permits a frozen memory view")
     all_scenarios = manifest["scenarios"]
     if not all_scenarios or any(s["split"] != "dev" for s in all_scenarios):
         raise ValueError(
@@ -123,6 +127,7 @@ async def run_benchmark(
             knowledge_store=knowledge_store,
             ablation=ablation,
             trace_store=trace_store,
+            memory_view=memory_view,
         )
         (output / f"{scenario_id}.json").write_text(result.model_dump_json(indent=2) + "\n")
         cases.append(score_case(scenario, result))
@@ -148,6 +153,10 @@ async def run_benchmark(
         "verification_mode": verification_mode,
         "ablation": policy.metadata() if policy else None,
         "knowledge_source_sha256": knowledge_store.source_sha256 if knowledge_store else None,
+        "memory": memory_view.snapshot.model_dump(mode="json")
+        | {"sha256": memory_view.snapshot.sha256}
+        if memory_view
+        else None,
         "manifest_sha256": hashlib.sha256(
             json.dumps(manifest, sort_keys=True, allow_nan=False).encode()
         ).hexdigest(),
@@ -175,7 +184,15 @@ async def run_benchmark(
             "Fault-only subsets cannot measure normal-scene false alarms."
             if not any(not s["faults"] for s in scenarios)
             else "Normal labels are limited to locally reviewed baseline scopes.",
-        ],
+        ]
+        + (
+            [
+                "A4 recalls development-run memories; only same-system overlapping windows are"
+                + " excluded, so A4 development scores are not held-out generalization."
+            ]
+            if memory_view
+            else []
+        ),
     }
     (output / "summary.json").write_text(json.dumps(summary, indent=2, allow_nan=False) + "\n")
     return summary
@@ -200,21 +217,26 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.mode == "llm" and not args.allow_model_calls:
         parser.error("LLM benchmark requires --allow-model-calls; no model request was sent")
-    summary = asyncio.run(
-        run_benchmark(
-            json.loads(args.manifest.read_text()),
-            args.scenario_root,
-            args.metadata,
-            args.output,
-            lambda: reasoner_from_args(args),
-            verification_mode=args.verification,
-            knowledge_store=knowledge_from_args(args),
-            review_bundle=args.review_bundle,
-            faults_only=args.faults_only,
-            ablation=args.ablation,
-            trace_store=TraceStore(args.trace_db) if args.trace_db else None,
-        )
-    )
+    knowledge_store = knowledge_from_args(args)
+
+    async def benchmark():
+        async with memory_from_args(args) as memory_view:
+            return await run_benchmark(
+                json.loads(args.manifest.read_text()),
+                args.scenario_root,
+                args.metadata,
+                args.output,
+                lambda: reasoner_from_args(args),
+                verification_mode=args.verification,
+                knowledge_store=knowledge_store,
+                review_bundle=args.review_bundle,
+                faults_only=args.faults_only,
+                ablation=args.ablation,
+                trace_store=TraceStore(args.trace_db) if args.trace_db else None,
+                memory_view=memory_view,
+            )
+
+    summary = asyncio.run(benchmark())
     print(json.dumps(summary["metrics"], indent=2, allow_nan=False))
     return 0
 
