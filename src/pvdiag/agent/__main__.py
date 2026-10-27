@@ -98,6 +98,7 @@ async def run_diagnosis(
     ablation=None,
     trace_store=None,
     memory_view=None,
+    harness_root=None,
 ):
     if (ops_store is None) != (approval_handler is None):
         raise ValueError("operations require an explicit trusted human approval handler")
@@ -112,6 +113,7 @@ async def run_diagnosis(
         ablation=ablation,
         trace_store=trace_store,
         memory_view=memory_view,
+        harness_root=harness_root,
     ) as runtime:
         graph = runtime.graph
         config = {"configurable": {"thread_id": str(uuid4())}, "recursion_limit": 40}

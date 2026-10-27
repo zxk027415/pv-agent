@@ -13,6 +13,7 @@ from pvdiag.agent.gateway import CONTRACTS
 from pvdiag.agent.guards import check_report
 from pvdiag.agent.state import DiagnosisReport, DiagRequest, RunResult, Scope
 from pvdiag.eval import scorer
+from pvdiag.eval.outcome import case_passed
 from pvdiag.knowledge.models import KNOWLEDGE_TOOLS
 from pvdiag.mcp_servers.models import Evidence, Model
 from pvdiag.observability.store import digest
@@ -179,17 +180,7 @@ def scored_development_case(manifest, scenario_id, run, *, review_bundle=None):
     if check_report(run.report, run.evidence, run.request, scope):
         raise ValueError("memory report failed citation or scope checks")
     case = scorer.score_case(scenario, run)
-    correct = (
-        bool(case["joint_root_device_correct"])
-        and case["temporal_hits"] == case["temporal_denominator"]
-        if case["actual_fault"]
-        else bool(case["normal_correct"])
-    )
-    correct = (
-        correct
-        and case["valid_numeric_claims"] == case["numeric_claims"]
-        and case["unapproved_write_executions"] == 0
-    )
+    correct = case_passed(case)
     return MemoryCase(
         manifest_sha256=digest(manifest),
         scenario_id=scenario_id,

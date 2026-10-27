@@ -68,9 +68,20 @@ async def open_runtime(
     ablation=None,
     trace_store=None,
     memory_view=None,
+    harness_root=None,
 ):
     policy, verification_mode = resolve_ablation(ablation, verification_mode)
     validate_ablation(policy, reasoner, knowledge_store, ops_store, memory_view)
+    if harness_root is not None and persistence is not None:
+        raise ValueError("candidate harness evaluations are not resumable persistent runs")
+    prompts = (
+        {
+            "prompt_path": Path(harness_root) / "harness" / "system_prompt.md",
+            "review_prompt_path": Path(harness_root) / "harness" / "verification_prompt.md",
+        }
+        if harness_root is not None
+        else {}
+    )
     async with AsyncExitStack() as stack:
         reader = await stack.enter_async_context(
             MCPGateway.connect(
@@ -99,6 +110,7 @@ async def open_runtime(
             ops_gateway=writer,
             ablation=ablation,
             memory_view=memory_view,
+            **prompts,
         )
         packages = {}
         for name in (

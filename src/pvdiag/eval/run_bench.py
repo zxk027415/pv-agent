@@ -33,6 +33,8 @@ async def run_benchmark(
     ablation=None,
     trace_store=None,
     memory_view=None,
+    harness_root=None,
+    scenario_ids=None,
 ):
     policy, verification_mode = resolve_ablation(ablation, verification_mode)
     if policy and (knowledge_store is not None) != (policy.level in {"A3", "A4"}):
@@ -54,6 +56,13 @@ async def run_benchmark(
 
         verify_release(manifest, review_bundle)
     scenarios = [s for s in all_scenarios if s["faults"]] if faults_only else all_scenarios
+    if scenario_ids is not None:
+        selected = set(scenario_ids)
+        if len(selected) != len(scenario_ids) or not selected <= {
+            s["scenario_id"] for s in scenarios
+        }:
+            raise ValueError("selected scenario IDs must be unique eligible manifest scenarios")
+        scenarios = [s for s in scenarios if s["scenario_id"] in selected]
     if not scenarios:
         raise ValueError("no eligible development fault scenarios selected")
     if any(
@@ -128,6 +137,7 @@ async def run_benchmark(
             ablation=ablation,
             trace_store=trace_store,
             memory_view=memory_view,
+            harness_root=harness_root,
         )
         (output / f"{scenario_id}.json").write_text(result.model_dump_json(indent=2) + "\n")
         cases.append(score_case(scenario, result))
