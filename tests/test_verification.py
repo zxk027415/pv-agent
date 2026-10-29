@@ -434,3 +434,43 @@ def test_only_exact_in_scope_identifiers_are_exempt_from_the_digit_guard():
         "19:30 起",
     ):
         assert has_uncited_digits(blocked, scope), blocked
+
+
+def test_citation_details_name_the_failing_entry_and_how_to_repair_it():
+    from pvdiag.agent.guards import check_report, citation_details
+    from pvdiag.agent.state import DiagnosisReport, DiagRequest, Scope
+
+    evidence = {
+        "ev_a": {
+            "tool": "get_timeseries",
+            "result": {"series": [{"points": [{"value": 26.5, "ts": "2019-01-03T00:00:00Z"}]}]},
+        },
+        "ev_b": {"tool": "peer_compare", "result": {"end": "2019-01-04T00:00:00Z"}},
+    }
+    finding = {
+        "fault_type": "F3",
+        "device_id": "inv01",
+        "confidence": "medium",
+        "window": {
+            "start": {"value": "2019-01-03T00:00:00Z", "evidence_id": "ev_a", "path": "/result/series/0/points/0/ts"},
+            "end": {"value": "2019-01-04T00:00:00Z", "evidence_id": "ev_b", "path": "/result/end"},
+        },
+        "rationale": "inv01 在该时段功率为零。",
+        "evidence_ids": ["ev_a", "ev_b"],
+        "numbers": [
+            {"label": "inv01 功率", "value": 26.5, "evidence_id": "ev_a", "path": "/result/series/0/points/0/value"},
+            {"label": "辐照读数", "value": 801.1, "evidence_id": "ev_a", "path": "/result/series/9/points/0/value"},
+            {"label": "同站比值", "value": 1.0, "evidence_id": "ev_a", "path": "/result/series/0/points/0/value"},
+        ],
+    }
+    report = DiagnosisReport(
+        status="fault", summary="发现停机。", findings=[finding], evidence_ids=["ev_a", "ev_b"]
+    )
+    request = DiagRequest(system_id=2107, device_ids=["inv01", "inv02", "inv03"], start="2019-01-01", end="2019-01-08")
+    scope = Scope(source_sha256="0" * 64, device_ids=request.device_ids, poa_device_id="poa", ambient_device_id=None)
+    assert check_report(report, evidence, request, scope) == ["invalid_numeric_citation"]
+    details = citation_details(report, evidence, scope)
+    assert [d["text"].split("（")[0] for d in details] == ["numbers[1]", "numbers[2]"]
+    assert "/result/series 只有 1 个元素（下标 0 至 0）" in details[0]["text"]
+    assert "证据中的值为 26.5" in details[1]["text"]
+    assert all(d["finding_index"] == 0 and d["evidence_id"] == "ev_a" for d in details)

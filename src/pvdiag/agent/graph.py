@@ -14,7 +14,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 
 from pvdiag.agent.ablation import resolve_ablation, summary_calls, validate_ablation
-from pvdiag.agent.guards import check_report, degrade
+from pvdiag.agent.guards import check_report, citation_details, degrade
 from pvdiag.agent.state import (
     ActionOutcome,
     ApprovalDecision,
@@ -243,9 +243,19 @@ def build_graph(
         structural = check_report(
             state["verdict"], state["evidence"], state["request"], state["scope"]
         )
+        detailed = citation_details(state["verdict"], state["evidence"], state["scope"])
         issues = [
             VerificationIssue(code=code, message=STRUCTURAL_GUIDANCE.get(code, "结构化输出或引用校验失败。"))
             for code in structural
+            if code not in {d["code"] for d in detailed}
+        ] + [
+            VerificationIssue(
+                code=d["code"],
+                message=(STRUCTURAL_GUIDANCE[d["code"]] + " " + d["text"])[:600],
+                finding_index=d["finding_index"],
+                evidence_ids=[d["evidence_id"]],
+            )
+            for d in detailed[:12]
         ]
         # Invalid citations must be repaired before domain logic dereferences them.
         if not structural and verification_mode != "structural":

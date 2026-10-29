@@ -69,34 +69,103 @@ def check_report(
             issues.append("finding_window_outside_scope")
         if has_uncited_digits(finding.rationale, scope):
             issues.append("uncited_number_in_rationale")
-        for claim in finding.numbers:
-            try:
-                actual = resolve(evidence[claim.evidence_id], claim.path)
-                if (
-                    claim.evidence_id not in citations
-                    or evidence[claim.evidence_id]["tool"] in KNOWLEDGE_TOOLS
-                    or isinstance(actual, bool)
-                    or not isinstance(actual, (int, float))
-                ):
-                    raise ValueError("not a cited numeric measurement")
-                if not math.isclose(actual, claim.value, rel_tol=1e-9, abs_tol=1e-9):
-                    raise ValueError("value mismatch")
-                if has_uncited_digits(claim.label, scope):
-                    raise ValueError("uncited number in label")
-            except (KeyError, IndexError, TypeError, ValueError):
-                issues.append("invalid_numeric_citation")
-        for bound in (finding.window.start, finding.window.end):
-            try:
-                actual = resolve(evidence[bound.evidence_id], bound.path)
-                if bound.evidence_id not in citations or not isinstance(actual, str):
-                    raise ValueError("not a cited timestamp")
-                if evidence[bound.evidence_id]["tool"] in KNOWLEDGE_TOOLS:
-                    raise ValueError("knowledge text is not an observed fault timestamp")
-                if utc_bound(actual) != utc_bound(bound.value):
-                    raise ValueError("timestamp mismatch")
-            except (KeyError, IndexError, TypeError, ValueError):
-                issues.append("invalid_time_citation")
+        if any(number_problem(c, citations, evidence, scope) for c in finding.numbers):
+            issues.append("invalid_numeric_citation")
+        if any(
+            time_problem(b, citations, evidence)
+            for b in (finding.window.start, finding.window.end)
+        ):
+            issues.append("invalid_time_citation")
     return sorted(set(issues))
+
+
+def pointer_hint(document, path: str) -> str:
+    """Where an RFC 6901 pointer stops matching, phrased for a model to repair it."""
+    current, walked = document, ""
+    for token in path[1:].split("/") if path.startswith("/") else []:
+        token = token.replace("~1", "/").replace("~0", "~")
+        if isinstance(current, list):
+            if not re.fullmatch(r"0|[1-9][0-9]*", token) or int(token) >= len(current):
+                return f"{walked or '/'} 只有 {len(current)} 个元素（下标 0 至 {len(current) - 1}）"
+            current = current[int(token)]
+        elif isinstance(current, dict):
+            if token not in current:
+                keys = "、".join(sorted(map(str, current))[:12])
+                return f"{walked or '/'} 下没有键 {token}，可用键：{keys}"
+            current = current[token]
+        else:
+            return f"{walked} 已是标量，不能继续向下取 {token}"
+        walked += "/" + token
+    return "路径不是合法的 JSON Pointer"
+
+
+def number_problem(claim, citations, evidence: dict, scope: Scope) -> str | None:
+    if claim.evidence_id not in evidence:
+        return "evidence_id 不存在"
+    try:
+        actual = resolve(evidence[claim.evidence_id], claim.path)
+    except (KeyError, IndexError, TypeError, ValueError):
+        return "路径不存在：" + pointer_hint(evidence[claim.evidence_id], claim.path)
+    if claim.evidence_id not in citations:
+        return "该证据未列入本条结论的 evidence_ids"
+    if evidence[claim.evidence_id]["tool"] in KNOWLEDGE_TOOLS:
+        return "知识库内容不能作为测量数值"
+    if isinstance(actual, bool) or not isinstance(actual, (int, float)):
+        return "路径指向的不是数值"
+    if not math.isclose(actual, claim.value, rel_tol=1e-9, abs_tol=1e-9):
+        return f"数值与证据不一致，证据中的值为 {actual!r}"
+    if has_uncited_digits(claim.label, scope):
+        return "label 含有范围内设备编号以外的数字字符"
+    return None
+
+
+def time_problem(bound, citations, evidence: dict) -> str | None:
+    if bound.evidence_id not in evidence:
+        return "evidence_id 不存在"
+    try:
+        actual = resolve(evidence[bound.evidence_id], bound.path)
+    except (KeyError, IndexError, TypeError, ValueError):
+        return "路径不存在：" + pointer_hint(evidence[bound.evidence_id], bound.path)
+    if bound.evidence_id not in citations:
+        return "该证据未列入本条结论的 evidence_ids"
+    if not isinstance(actual, str):
+        return "路径指向的不是时间戳"
+    if evidence[bound.evidence_id]["tool"] in KNOWLEDGE_TOOLS:
+        return "知识库文本不能作为观测故障时间"
+    try:
+        if utc_bound(actual) != utc_bound(bound.value):
+            return f"时间与证据不一致，证据中的值为 {actual}"
+    except (TypeError, ValueError):
+        return "路径指向的文本不是可解析的时间戳"
+    return None
+
+
+def citation_details(report: DiagnosisReport, evidence: dict, scope: Scope) -> list[dict]:
+    """Per-entry reasons behind invalid numeric/time citations, for repair feedback only."""
+    details = []
+    for index, finding in enumerate(report.findings):
+        citations = set(finding.evidence_ids)
+        for position, claim in enumerate(finding.numbers):
+            if reason := number_problem(claim, citations, evidence, scope):
+                details.append(
+                    {
+                        "code": "invalid_numeric_citation",
+                        "finding_index": index,
+                        "evidence_id": claim.evidence_id,
+                        "text": f"numbers[{position}]（{claim.label}，{claim.path}）：{reason}",
+                    }
+                )
+        for name, bound in (("start", finding.window.start), ("end", finding.window.end)):
+            if reason := time_problem(bound, citations, evidence):
+                details.append(
+                    {
+                        "code": "invalid_time_citation",
+                        "finding_index": index,
+                        "evidence_id": bound.evidence_id,
+                        "text": f"window.{name}（{bound.path}）：{reason}",
+                    }
+                )
+    return details
 
 
 def degrade(evidence: dict) -> DiagnosisReport:
