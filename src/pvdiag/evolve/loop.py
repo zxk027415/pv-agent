@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import random
+import re
 from pathlib import Path
 
 from pvdiag.eval import scorer
@@ -21,6 +22,32 @@ def scorer_sha256():
 
 def category(scenario):
     return "+".join(sorted(f["type"] for f in scenario["faults"])) or "N"
+
+
+CLOCK = re.compile(r"\d{4}-\d{2}-\d{2}|\b\d{1,2}:\d{2}\b")
+
+
+def benchmark_identifiers(scenarios):
+    values = set()
+    for s in scenarios:
+        values.add(s["scenario_id"])
+        values.update(s.get("device_ids", []))
+        if s.get("poa_device_id"):
+            values.add(s["poa_device_id"])
+        values.update(f["device_id"] for f in s["faults"] if f.get("device_id"))
+    return values
+
+
+def leaked(patch, identifiers):
+    """Benchmark identifiers, dates or clock times newly written by a patch."""
+    found = set()
+    for edit in patch.edits:
+        for value in identifiers:
+            pattern = rf"(?<![A-Za-z0-9_]){re.escape(value)}(?![A-Za-z0-9_])"
+            if re.search(pattern, edit.new) and not re.search(pattern, edit.old):
+                found.add(value)
+        found |= set(CLOCK.findall(edit.new)) - set(CLOCK.findall(edit.old))
+    return sorted(found)
 
 
 def max_diagnoses(scenarios, rounds, patches):
@@ -97,6 +124,7 @@ async def run_evolution(
     if (output / "ledger.json").exists():
         raise ValueError("evolution output already exists; use a new directory")
     categories = {s["scenario_id"]: category(s) for s in scenarios}
+    identifiers = benchmark_identifiers(scenarios)
     rng = random.Random(seed)
     frozen_scorer = scorer_sha256()
     current = base or Harness.from_root()
@@ -150,15 +178,20 @@ async def run_evolution(
             {"patch_id": key, "failure_mode": value["failure_mode"], "outcome": value["outcome"]}
             for key, value in ledger["patches"].items()
         ]
-        proposed = await proposer.propose(
-            current,
-            [
-                {"scenario_id": sid, "case": current_eval[sid]["case"], "run": current_eval[sid]["run"]}
-                for sid in failures
-            ],
-            patches_per_round,
-            history,
-        )
+        try:
+            proposed = await proposer.propose(
+                current,
+                [
+                    {"scenario_id": sid, "case": current_eval[sid]["case"], "run": current_eval[sid]["run"]}
+                    for sid in failures
+                ],
+                patches_per_round,
+                history,
+            )
+        except (ValueError, RuntimeError) as error:
+            # Adapter errors are already redacted (budget, provider failure, bad output).
+            ledger["stopped"] = {"reason": "proposer_failed", "round": number, "error": str(error)}
+            break
         if len(proposed) > patches_per_round:
             raise ValueError("proposer exceeded the per-round patch budget")
         passing = sorted(set(ids) - set(failures))
@@ -182,6 +215,15 @@ async def run_evolution(
             if patch.identity in ledger["patches"]:
                 entry["outcome"], entry["reason"] = "rejected", "duplicate_of_earlier_proposal"
                 record["patches"].append({"patch_id": patch.identity, "outcome": "duplicate"})
+                continue
+            if leaks := leaked(patch, identifiers):
+                entry |= {
+                    "outcome": "rejected",
+                    "reason": "references_benchmark_specifics",
+                    "detail": leaks[:10],
+                }
+                ledger["patches"][patch.identity] = entry
+                record["patches"].append({"patch_id": patch.identity, "outcome": "rejected"})
                 continue
             try:
                 candidate = current.apply(patch)

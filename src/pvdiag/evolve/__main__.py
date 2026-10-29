@@ -3,10 +3,12 @@
 import argparse
 import asyncio
 import json
+from argparse import Namespace
 from pathlib import Path
 
 from pvdiag.agent.__main__ import add_model_arguments, reasoner_from_args
-from pvdiag.evolve.loop import MAX_PATCHES, MAX_ROUNDS, max_diagnoses, run_evolution
+from pvdiag.evolve.loop import MAX_PATCHES, MAX_ROUNDS, category, max_diagnoses, run_evolution
+from pvdiag.evolve.proposer import LLMPatchProposer
 from pvdiag.evolve.runners import BenchEvaluator, FilePatchProposer
 from pvdiag.knowledge.store import KnowledgeStore
 from pvdiag.mcp_servers.pv_knowledge import add_knowledge_arguments, knowledge_from_args
@@ -21,8 +23,20 @@ def main(argv=None):
         "--metadata", type=Path, default=Path("data/raw/2107/metadata/2107_system_metadata.json")
     )
     parser.add_argument("--output", type=Path, required=True, help="new evolution directory")
+    proposer = parser.add_mutually_exclusive_group(required=True)
+    proposer.add_argument(
+        "--proposer-file", type=Path, help="reviewed patches per round (offline, no model)"
+    )
+    proposer.add_argument("--proposer-model", help="model that proposes harness patches")
+    parser.add_argument("--proposer-base-url", default="https://api.deepseek.com")
+    parser.add_argument("--proposer-credential-env")
     parser.add_argument(
-        "--proposer-file", type=Path, required=True, help="reviewed patches per round (offline)"
+        "--max-proposer-calls", type=int, help="proposer call budget; default and maximum: rounds"
+    )
+    parser.add_argument(
+        "--allow-proposer-calls",
+        action="store_true",
+        help="explicitly permit potentially billable patch-proposal requests",
     )
     parser.add_argument("--rounds", type=int, default=MAX_ROUNDS)
     parser.add_argument("--patches", type=int, default=MAX_PATCHES)
@@ -41,6 +55,32 @@ def main(argv=None):
     args = parser.parse_args(argv)
     manifest = json.loads(args.manifest.read_text())
     scenarios = [s for s in manifest["scenarios"] if s["faults"] or not args.faults_only]
+    if args.proposer_model:
+        calls = args.max_proposer_calls or args.rounds
+        if not args.allow_proposer_calls:
+            parser.error("the model proposer requires --allow-proposer-calls; nothing was sent")
+        if not 1 <= calls <= args.rounds:
+            parser.error("--max-proposer-calls must be between 1 and --rounds")
+        try:
+            patch_proposer = LLMPatchProposer(
+                reasoner_from_args(
+                    Namespace(
+                        mode="llm",
+                        allow_model_calls=True,
+                        model=args.proposer_model,
+                        base_url=args.proposer_base_url,
+                        credential_env=args.proposer_credential_env,
+                        max_model_calls=calls,
+                    )
+                ),
+                {s["scenario_id"]: category(s) for s in scenarios},
+            )
+        except ValueError as error:
+            parser.error(f"{error}; no model request was sent")
+    else:
+        if args.max_proposer_calls or args.allow_proposer_calls:
+            parser.error("proposer call options only apply to --proposer-model")
+        patch_proposer = FilePatchProposer(args.proposer_file)
     bound = max_diagnoses(len(scenarios), args.rounds, args.patches)
     if args.mode == "llm":
         calls = bound * args.max_model_calls
@@ -80,7 +120,7 @@ def main(argv=None):
             return await run_evolution(
                 manifest,
                 evaluator,
-                FilePatchProposer(args.proposer_file),
+                patch_proposer,
                 args.output,
                 rounds=args.rounds,
                 patches_per_round=args.patches,
