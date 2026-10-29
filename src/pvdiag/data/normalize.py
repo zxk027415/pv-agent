@@ -39,8 +39,8 @@ class Channel:
 def channels_from_metadata(metadata: dict) -> list[Channel]:
     """Map measured channels, using explicit units and stable source device IDs.
 
-    The 2107 metadata omits inverter ``source_id``. Its explicit ``inv_01``
-    channel names are used as a fallback; unsupported device mappings fail.
+    The 2107/9069 metadata omit inverter ``source_id``. Their explicit ``inv_01`` /
+    ``inverter_01`` channel names are used as a fallback; unsupported mappings fail.
     Metadata ``units`` describes exported CSV values, so raw calc_scale/offset
     must not be applied a second time.
     """
@@ -59,7 +59,7 @@ def channels_from_metadata(metadata: dict) -> list[Channel]:
         if unit not in scales:
             raise ValueError(f"unsupported unit {unit!r} for {column}")
         offset = -32 * 5 / 9 if unit in {"f", "°f"} else 0.0
-        inverter = re.match(r"inv_(\d+)_", column)
+        inverter = re.match(r"inv(?:erter)?_(\d+)_", column)
         source_type = info["source_type"].upper()
         if source_type == "INVERTER":
             if inverter:

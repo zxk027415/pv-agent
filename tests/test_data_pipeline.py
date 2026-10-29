@@ -245,3 +245,25 @@ def test_pipeline_cli_parquet_and_json_roundtrip(tmp_path, metadata):
     assert card["rows"] == 1
     assert card["normalization"]["sources"][0]["timezone"] == "PST8PDT"
     assert pd.read_parquet(clean / "2107.parquet").value.tolist() == [300.0]
+
+
+def test_both_site_inverter_naming_styles_map_to_stable_ids():
+    def channel(name, source_type="INVERTER"):
+        return {
+            "metric_id": 1,
+            "common_name": "AC power",
+            "units": "kW",
+            "source_type": source_type,
+            "source_id": None,
+        }
+
+    metadata = {
+        "Metrics": {
+            "inv_07_ac_power_inv_149589": channel("2107"),
+            "inverter_23_ac_power_(kw)_inv_150975": channel("9069"),
+        }
+    }
+    assert {c.device_id for c in channels_from_metadata(metadata)} == {"inv07", "inv23"}
+    metadata["Metrics"]["investigation_ac_power_x"] = channel("unrelated")
+    with pytest.raises(ValueError, match="cannot identify inverter"):
+        channels_from_metadata(metadata)
