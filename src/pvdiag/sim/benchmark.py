@@ -218,11 +218,13 @@ def generate_candidates(
     windows = len({entry[0] for entry in pool})
 
     def ordered(index, count):
-        """Default: every type scans from the start. spread_windows staggers start weeks."""
+        """Default: every type scans from the start. spread_windows interleaves types
+        across the season (type k first takes windows k, k+K, k+2K, ...), so fault type
+        does not correlate with season; remaining entries follow as fallbacks."""
         if not spread_windows:
             return pool
-        offset = index * windows // max(1, count)
-        return pool[offset:] + pool[:offset]
+        preferred = pool[index:windows:count]
+        return preferred + [entry for entry in pool if entry not in preferred]
 
     for kind_index, kind in enumerate(fault_types if per_type else ()):
         generated = []
