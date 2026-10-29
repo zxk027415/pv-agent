@@ -445,7 +445,7 @@ pv-diagnosis-agent/
 | 消融执行边界 | 已接 A0–A3 显式档位、统一固定摘要、网关工具白名单、隔离核验反馈、共享模型预算与恢复契约；271 项测试通过，新增 30 项离线边界/评测/真实 PostgreSQL 检查，不代表真实模型消融成绩 |
 | 可观测 | 模型、只读工具、审批后工单及 API 已接显式本地追踪；开发评测可生成 Dataset/Experiment 和固定评分导出；OTLP v4 / Dataset v2 / Scores 离线 HTTP 契约与真实 PostgreSQL 审批恢复已验证，真实 B0 十场景生成 101 条观察记录，尚未上传云端 |
 | Ragas | 已接原生 context precision/recall/faithfulness、独立回答/Judge 预算、可恢复缓存及本地追踪；BM25/BGE 三十题输入包已生成，每套九十段上下文，原生算法的离线契约已验证；尚无真实 Judge 质量分数，参考答案仍未经独立审核 |
-| M3–M4 | 长期记忆 `PgVectorStore` 与 A4 档位已接入单次诊断、持久会话和开发集评测，真实 pgvector + BGE 端到端验证通过，但没有真实 A4 成绩；自进化循环（提议/试跑/合并/沉淀、隔离 harness 变体、A5 评测入口）已接通，提议器支持文件回放与 LLM 两种，LLM 提议只经离线 SDK 验证，没有真实进化结果；失败驱动的场景生成器已实现，并已接入自进化循环为每轮扩充试跑场景；M4 的 Gradio 本机单页已接通；README 与 Docker Compose（PostgreSQL + API）已完成并实测；9069 已下载、清洗并核验时区，但现有筛查方法（含新增的大电站容忍规则）下没有可用的跨站候选，需改换筛查方法；Claude Desktop 接入配置已实测；OpenViking 经调研暂不接入，保留 pgvector |
+| M3–M4 | 长期记忆 `PgVectorStore` 与 A4 档位已接入单次诊断、持久会话和开发集评测，真实 pgvector + BGE 端到端验证通过，但没有真实 A4 成绩；自进化循环（提议/试跑/合并/沉淀、隔离 harness 变体、A5 评测入口）已接通，提议器支持文件回放与 LLM 两种，LLM 提议只经离线 SDK 验证，没有真实进化结果；失败驱动的场景生成器已实现，并已接入自进化循环为每轮扩充试跑场景；M4 的 Gradio 本机单页已接通；README 与 Docker Compose（PostgreSQL + API）已完成并实测；2107 留出候选 70 个（含 20 份待审基线）与 9069 跨站候选 40 个已生成，两者评测入口均保持关闭；Claude Desktop 接入配置已实测；OpenViking 经调研暂不接入，保留 pgvector |
 
 ### 数据核验结论与处理边界
 
@@ -1144,3 +1144,20 @@ HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 .venv/bin/python -m pvdiag.eval.ragas pr
 **Claude Desktop 接入**：新增 `config/claude_desktop.example.json`，接入 pv-data、pv-analytics、pv-knowledge 三个只读服务（共 11 个工具），默认指向 M1 场景 `S2107-F3-0001`；写工单的 pv-ops 不接入。README 给出用 `sed` 填入本机路径的方法，由用户自行合并到 Claude Desktop 配置（未修改用户的配置文件）。用与示例完全相同的命令经 stdio 实测：三个服务都能启动，11 个工具全部标为只读；`list_devices`、`data_quality`、`get_playbook` 真实调用成功。尚未在 Claude Desktop 界面内实际对话演示。
 
 **OpenViking 调研**（未安装、未运行，依据 PyPI 元数据、GitHub 许可证接口与官方 README）：0.5.2.1；许可证 **AGPL-3.0**；需要单独部署服务，并配置嵌入模型和 VLM 来生成 L0/L1 摘要（云端模型会计费并上传内容，本地 Ollama 需下载大模型）；依赖包含火山引擎云 SDK、爬虫与文档抓取库、预编译原生 wheel。与本项目离线、不隐式上传、调用需授权的约束冲突，许可证对公开发布的影响也需要用户判断。按 §7 的预案保留 pgvector 实现，`MemoryStore` 接口不变，日后若决定接入可新增实现。
+
+### 日间 POA 覆盖率规则、2107 留出候选与 9069 跨站候选（2026-10-29）
+
+**原因**：2107 的 2020 年 52 周中只有 2 周的 POA 覆盖率 ≥99%（中位数 98.07%）；缺失的 702 个 15 分钟 bin 集中在 UTC 6–11 点，即当地夜间。窗口级规则按全天统计 POA 覆盖率，使对诊断没有影响的夜间缺口否决了几乎整年的窗口；设备级的白天缺测、近零、可比性检查本来就只看白天。9069 在 3 月同理。
+
+**规则**（`ebb38d4`）：`screen_baseline(..., daytime_site=(纬度, 经度))` 只在太阳高度角大于 0 的 bin 上统计 POA 覆盖率（pvlib 太阳位置），其余检查全部不变；版本号加 `-daytime-poa`，阈值记录统计范围与坐标；CLI 为 `--daytime-poa-coverage 纬度 经度`。清单写入 `poa_coverage_scope`，`scenarios.screening_options(manifest)` 据此在所有重建路径（生成器写文件、基线审核准备、失败驱动生成器的候选池与物化）复用同一规则；首版漏传导致「baseline failed screening」，已修正。默认（严格）路径不变：用默认参数再次重新生成 M2，清单 SHA-256 与仓库一致，现有 M2 审核包状态仍可读取。
+
+**2107 留出候选**（`bench/t2107_heldout_candidates.json`，观测在忽略的 `data/t2107_candidates/`）：`--split test` 新增 `T` 前缀和用途标记 `heldout_candidates_never_used_for_tuning`，`--fault-types` 可选子集。2020 年、inv13–inv24、`sensor_149574`、7 天窗口：F1、F2、F3、F4、F6 各 10 个，加 20 个未注入候选，共 70 个；遵循用户确认的单 POA 决定，**不生成 F5 留出**。与 M1、M2 开发集一起通过隔离校验：查询窗口 2020-01-15 至 2020-09-16（开发集最晚到 2019-12-10），可见逆变器无重叠。`run_bench` 在读取任何观测之前拒绝该清单，未创建输出。
+
+**留出基线审核**：`baseline_review prepare` 原先只接受开发集，现改为「每个审核包只能包含一个 dev 或 test 划分」。审核人只看注入前基线和中性内容 ID，看不到标签或诊断结果，发布后的清单仍为 test 划分、仍被评测入口拒绝。已生成 `data/reviews/t2107_heldout_v1/`：20 份原始基线包，离线页面 `index.html`，状态 20 份待审、0 接受。
+
+**9069 跨站候选**（`bench/x9069_cross_site_candidates.json`，观测在 `data/x9069_candidates/`）：同时开启日间 POA 覆盖率与 1% 同站离群容忍（版本 `m1-v1-large-site-daytime-poa`）。3 月中下旬日间 POA 覆盖率达到 100%，候选池 21 组。2019 年 3–9 月、40 台逆变器、`sensor_150243`、7 天窗口：6 类各 5 个加 10 个未注入候选，共 40 个，与 2107 开发集和留出候选一起通过隔离校验。
+
+**局限**：
+- 9069 候选**多样性很低**：只覆盖 3 周（2019-03-15、03-22、04-19）、10 个不同的窗口与设备组合，其中 26 个场景在同一周；夏季窗口仍因同站离群全部不合格。它只适合跑通跨站流程，不足以支撑可靠的泛化结论。
+- 两条新规则都是对基线筛查的放宽，开发集仍用原规则；最终报告是否接受留出与跨站候选采用的规则，需要用户决定。
+- 正常候选都未经人工审核，留出与跨站的正常误报率暂无法评测；留出与跨站评测入口均未开放，没有成绩。
