@@ -1,0 +1,11 @@
+.git
+.env
+.venv
+.venv-ui
+.venv-eval
+data
+.claude
+**/__pycache__
+.pytest_cache
+.ruff_cache
+.DS_Store

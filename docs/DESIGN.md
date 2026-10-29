@@ -445,7 +445,7 @@ pv-diagnosis-agent/
 | 消融执行边界 | 已接 A0–A3 显式档位、统一固定摘要、网关工具白名单、隔离核验反馈、共享模型预算与恢复契约；271 项测试通过，新增 30 项离线边界/评测/真实 PostgreSQL 检查，不代表真实模型消融成绩 |
 | 可观测 | 模型、只读工具、审批后工单及 API 已接显式本地追踪；开发评测可生成 Dataset/Experiment 和固定评分导出；OTLP v4 / Dataset v2 / Scores 离线 HTTP 契约与真实 PostgreSQL 审批恢复已验证，真实 B0 十场景生成 101 条观察记录，尚未上传云端 |
 | Ragas | 已接原生 context precision/recall/faithfulness、独立回答/Judge 预算、可恢复缓存及本地追踪；BM25/BGE 三十题输入包已生成，每套九十段上下文，原生算法的离线契约已验证；尚无真实 Judge 质量分数，参考答案仍未经独立审核 |
-| M3–M4 | 长期记忆 `PgVectorStore` 与 A4 档位已接入单次诊断、持久会话和开发集评测，真实 pgvector + BGE 端到端验证通过，但没有真实 A4 成绩；自进化循环（提议/试跑/合并/沉淀、隔离 harness 变体、A5 评测入口）已接通，提议器支持文件回放与 LLM 两种，LLM 提议只经离线 SDK 验证，没有真实进化结果；失败驱动的场景生成器已实现，并已接入自进化循环为每轮扩充试跑场景；M4 的 Gradio 本机单页已接通；OpenViking、9069、Docker Compose、README 和完整演示打包仍未完成 |
+| M3–M4 | 长期记忆 `PgVectorStore` 与 A4 档位已接入单次诊断、持久会话和开发集评测，真实 pgvector + BGE 端到端验证通过，但没有真实 A4 成绩；自进化循环（提议/试跑/合并/沉淀、隔离 harness 变体、A5 评测入口）已接通，提议器支持文件回放与 LLM 两种，LLM 提议只经离线 SDK 验证，没有真实进化结果；失败驱动的场景生成器已实现，并已接入自进化循环为每轮扩充试跑场景；M4 的 Gradio 本机单页已接通；README 与 Docker Compose（PostgreSQL + API）已完成并实测；OpenViking、9069 跨站和 Claude Desktop 演示仍未完成 |
 
 ### 数据核验结论与处理边界
 
@@ -1099,3 +1099,21 @@ HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 .venv/bin/python -m pvdiag.eval.ragas pr
 离线逐条复核：两轮共 15 条数值中 13 条有效；失败的都是辐照读数，路径写成 `/result/series/9/...`，而该 `get_timeseries` 证据只有 8 个序列（辐照计 `poa_wm2` 在下标 7）。模型收到的证据结构与保存的一致，是模型数错了下标，守卫拒绝正确。两个系统因素放大了这个错误：① `get_timeseries` 返回「设备 × 指标」全组合，8 个序列中有 4 个无意义（逆变器的辐照、辐照计的功率），拉长了下标；② 修复提示只说「有条目不符」，没有指出是哪一条、哪个路径，模型在第 3 轮没能改正。
 
 **结论**：工具 schema、故障代码释义和设备编号放行这三处修复之后，LLM 在这个场景上已经能给出根因、设备、时间窗都正确的结论，只差数值引用的准确性。这仍只是一个开发场景上的单次结果，不能外推为 LLM 诊断能力。
+
+### 引用逐条反馈、工具测点过滤与 Docker Compose（2026-10-29）
+
+**逐条引用反馈**（`3e3becd`）：守卫中单条数值引用和单个时间边界的判定抽成 `number_problem` / `time_problem`，`check_report` 与新增的 `citation_details` 共用，判定结果不变。核验反馈对每条出错的引用单独给出结论序号、证据 ID、条目位置和原因；路径越界时说明数组实际长度与下标范围，数值不符时给出证据中的真实值。用第三次 DeepSeek 运行的真实失败报告离线复核，模型现在会收到「numbers[0]（…，/result/series/9/points/13/value）：路径不存在：/result/series 只有 8 个元素（下标 0 至 7）」。尚未用真实模型验证这能否让模型自行改正。
+
+**工具测点过滤**（`ebf0123`）：`get_timeseries` 与 `data_quality` 不再返回「设备 × 指标」全组合，快照目录中没有的组合改记在新字段 `unavailable`（如 `inv03:poa_wm2`）；目录中登记但整段缺失的测点照常返回零覆盖率，不影响 F6 判别。证据内容和 ID 因此变化，已保存的运行各自仍自洽。B0 回归逐场景一致：M1 联合 10/10、时间窗 9/10、91 次工具调用；M2 故障子集 33/60、32/60、484 次调用，60 个场景无任何差异。
+
+**README 与 Docker Compose**：新增 `README.md`（现状、架构、快速开始、可选功能、安全边界、数据许可），以及 `Dockerfile`、`docker-compose.yml`、`.dockerignore`、`requirements/docker-universal.txt`。
+
+- Compose 只包含 pgvector PostgreSQL 与 API。API 在容器内监听所有地址，但端口只发布到宿主机 `127.0.0.1:8000`；Gradio 仍在本机运行并连接该回环地址，没有为容器放宽 UI 的回环/HTTPS 限制。
+- `migrate` 服务执行一次显式、可重复的建表（全部为 `IF NOT EXISTS`），成功后才启动 API；`serve` 本身仍不迁移。
+- 只向容器传入 `POSTGRES_PASSWORD`、组装出的 DSN 与 `PVDIAG_API_TOKENS`，`.env` 中的模型凭据不进入容器；`.env` 与 `data/` 不进入构建上下文，观测数据以只读方式挂载；容器以 uid 10001 的普通用户运行。
+- 容器锁文件以 `uv.lock` 导出的核心版本为约束，再加 `requirements/api.in`，共 121 个包，核心与 API 版本和本机一致，不含 torch/BGE。
+- 首次构建发现：包安装进 site-packages 后，代码按 `parents[3]` 定位的 `harness/`、`kb/` 落到 `/usr/local/lib/python3.11/` 下，诊断以 `run_failed` 失败。改为不安装包、以 `PYTHONPATH=/app/src` 直接从源码目录运行后解决。本机运行方式不受影响。
+
+**实测**（Docker 29.8，linux/aarch64，独立项目名，验证用的测试 token 与数据库密码临时生成在仓库外、未显示，验证后连同容器、数据卷、本地镜像一并删除）：三个服务启动正常（`migrate` 退出码 0），健康检查 ready；用测试身份读取 profile 后提交 B0 诊断，SSE 返回 1 个 accepted、16 个节点事件和 completed，结论为 F3、inv03、2019-01-12 19:30–22:30Z，10 次工具调用、零模型调用；重启 API 容器后 `GET /runs/{id}` 仍返回 completed，结果确实持久化在 PostgreSQL。基础镜像缓存保留在本机。
+
+**局限**：只在 macOS 上的 Docker Desktop（arm64 Linux 容器）实测，x86_64 未验证；镜像只覆盖 B0 与 BM25，LLM、BGE、记忆和 UI 不在镜像内。全套 **325 项通过、18 项跳过**。

@@ -1,0 +1,42 @@
+# PostgreSQL (pgvector) + diagnosis API. Only the variables listed below enter the
+# containers; model credentials in .env are not passed through.
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: pvdiag
+      POSTGRES_DB: pvdiag
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pvdiag -d pvdiag"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  # Explicit, idempotent table initialization (CREATE ... IF NOT EXISTS); serve never migrates.
+  migrate:
+    build: .
+    command: ["python", "-m", "pvdiag.api", "init"]
+    environment:
+      PVDIAG_POSTGRES_DSN: postgresql://pvdiag:${POSTGRES_PASSWORD}@db:5432/pvdiag
+    depends_on:
+      db:
+        condition: service_healthy
+
+  api:
+    build: .
+    environment:
+      PVDIAG_POSTGRES_DSN: postgresql://pvdiag:${POSTGRES_PASSWORD}@db:5432/pvdiag
+      PVDIAG_API_TOKENS: ${PVDIAG_API_TOKENS:?set PVDIAG_API_TOKENS in .env}
+    volumes:
+      - ./data:/app/data:ro
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  pgdata:
