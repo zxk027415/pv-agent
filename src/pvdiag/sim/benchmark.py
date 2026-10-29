@@ -37,6 +37,7 @@ def screened_pool(
     stride_days=7,
     max_peer_outlier_fraction=0.0,
     daytime_site=None,
+    peer_check="bin",
 ):
     lower, upper = window_bounds(start, end)
     if not 7 <= window_days <= 90 or stride_days < 1:
@@ -64,6 +65,7 @@ def screened_pool(
             poa_device_id,
             max_peer_outlier_fraction,
             daytime_site,
+            peer_check,
         )
         local_cohorts = []
         # Limit combinatorial expansion while retaining distinct normal candidates.
@@ -77,6 +79,7 @@ def screened_pool(
                 poa_device_id,
                 max_peer_outlier_fraction,
                 daytime_site,
+                peer_check,
             )
             if set(final["eligible_devices"]) == set(selected):
                 local_cohorts.append((left, right, selected))
@@ -164,6 +167,8 @@ def generate_candidates(
     daytime_site=None,
     compounds=(),
     per_compound=0,
+    peer_check="bin",
+    spread_windows=False,
 ):
     # Single-fault scenes may be omitted only in an explicit compound-only pool.
     if not (0 if compounds else 1) <= per_type <= 100 or not 0 <= normal_count <= 200:
@@ -195,6 +200,7 @@ def generate_candidates(
         stride_days,
         max_peer_outlier_fraction,
         daytime_site,
+        peer_check,
     )
     if not pool:
         raise ValueError("no screened development cohorts; baseline criteria were not relaxed")
@@ -203,13 +209,24 @@ def generate_candidates(
         for key, value in (
             ("max_peer_outlier_fraction", max_peer_outlier_fraction),
             ("daytime_site", daytime_site),
+            ("peer_check", peer_check if peer_check != "bin" else None),
         )
         if value
     }
     scenarios = []
-    for kind in fault_types if per_type else ():
+    # Pool order is first cohort per window (chronological), then the extras.
+    windows = len({entry[0] for entry in pool})
+
+    def ordered(index, count):
+        """Default: every type scans from the start. spread_windows staggers start weeks."""
+        if not spread_windows:
+            return pool
+        offset = index * windows // max(1, count)
+        return pool[offset:] + pool[:offset]
+
+    for kind_index, kind in enumerate(fault_types if per_type else ()):
         generated = []
-        for left, right, selected in pool:
+        for left, right, selected in ordered(kind_index, len(fault_types)):
             number = len(generated) + 1
             try:
                 fault = make_fault(
@@ -292,7 +309,12 @@ def generate_candidates(
         scenarios.extend(generated)
     if len(pool) < normal_count:
         raise ValueError(f"only {len(pool)}/{normal_count} distinct unmodified baseline candidates")
-    for number, (left, right, selected) in enumerate(pool[:normal_count], start=1):
+    normals = (
+        [pool[i * windows // normal_count] for i in range(normal_count)]
+        if spread_windows and normal_count <= windows
+        else pool[:normal_count]
+    )
+    for number, (left, right, selected) in enumerate(normals, start=1):
         scenarios.append(
             Scenario(
                 f"{prefixes[split]}{system_id}-N-{number:04d}",
@@ -337,6 +359,17 @@ def main(argv=None):
         help="explicit hard two-fault pair, repeatable (e.g. F3,F5)",
     )
     parser.add_argument("--per-compound", type=int, default=0)
+    parser.add_argument(
+        "--spread-windows",
+        action="store_true",
+        help="stagger fault types and normals across the season instead of the earliest weeks",
+    )
+    parser.add_argument(
+        "--peer-check",
+        choices=["bin", "daily"],
+        default="bin",
+        help="explicit rule: compare daily daylight energy instead of every bin",
+    )
     parser.add_argument("--fault-types", nargs="+", choices=FAULT_TYPES, default=list(FAULT_TYPES))
     parser.add_argument(
         "--max-peer-outlier-fraction",
@@ -367,6 +400,8 @@ def main(argv=None):
         daytime_site=tuple(args.daytime_poa_coverage) if args.daytime_poa_coverage else None,
         compounds=tuple(tuple(pair.split(",")) for pair in args.compound),
         per_compound=args.per_compound,
+        peer_check=args.peer_check,
+        spread_windows=args.spread_windows,
     )
     manifest = {
         "schema_version": 2,
@@ -390,6 +425,10 @@ def main(argv=None):
             "scope": "sun_above_horizon",
             "site": list(args.daytime_poa_coverage),
         }
+    if args.spread_windows:
+        manifest["spread_windows"] = True
+    if args.peer_check != "bin":
+        manifest["peer_check"] = args.peer_check
     if args.compound:
         manifest["compounds"] = {"pairs": args.compound, "per_pair": args.per_compound}
     if tuple(args.fault_types) != FAULT_TYPES:

@@ -70,6 +70,7 @@ def screen_baseline(
     poa_device_id: str,
     max_peer_outlier_fraction: float = 0.0,
     daytime_site: tuple[float, float] | None = None,
+    peer_check: str = "bin",
 ) -> dict:
     """Select devices with full daylight data and no obvious peer outliers.
 
@@ -87,7 +88,16 @@ def screen_baseline(
     measured only over bins with the sun above the horizon (pvlib solar position),
     so night-time logger gaps no longer reject a window. Daylight device checks
     are unchanged.
+
+    ``peer_check="daily"`` is a third explicit rule: the peer comparison uses each
+    device's daily daylight energy (normalized by its own median day) against the
+    leave-one-out peer median, so passing cloud shadows that desynchronize bins on
+    a large site cancel out, while day-scale losses are still rejected. Every
+    bin-level missing/near-zero/negative/comparability check is unchanged; short
+    partial derates can pass this rule.
     """
+    if peer_check not in {"bin", "daily"}:
+        raise ValueError("peer check must be bin or daily")
     if not 0.0 <= max_peer_outlier_fraction <= 0.05:
         raise ValueError("peer outlier tolerance must be between 0 and 5% of daylight bins")
     validate_frame(frame, system_id)
@@ -109,6 +119,18 @@ def screen_baseline(
     allowed_outliers = int(max_peer_outlier_fraction * int(daylight.sum()))
     scales = power[daylight].quantile(0.95)
     normalized = power.div(scales.where(scales > 0), axis="columns")
+    daily_outliers = {}
+    if peer_check == "daily":
+        energy = power.where(daylight).resample("1D").sum(min_count=1)
+        energy = energy.div(energy.median().where(energy.median() > 0), axis="columns")
+        for device in device_ids:
+            peers = energy.drop(columns=device)
+            peer_median = peers.median(axis=1).where(peers.notna().sum(axis=1) >= 2)
+            day_ratio = energy[device].div(peer_median.where(peer_median > 0))
+            # Days without a comparable ratio count as failures, never as passes.
+            daily_outliers[device] = int(
+                ((day_ratio < 0.85) | (day_ratio > 1.20) | day_ratio.isna()).sum()
+            )
     devices = []
     for device in device_ids:
         peers = normalized.drop(columns=device)
@@ -125,6 +147,8 @@ def screen_baseline(
             "daylight_peer_outlier_bins": int(((ratio < 0.85) | (ratio > 1.20))[daylight].sum()),
             "empirical_p95_kw": float(scales[device]) if pd.notna(scales[device]) else None,
         }
+        if peer_check == "daily":
+            item["daily_peer_outlier_days"] = daily_outliers[device]
         item["eligible"] = bool(
             poa_coverage >= 0.99
             and int(daylight.sum()) >= 16
@@ -138,7 +162,11 @@ def screen_baseline(
                     "daylight_uncomparable_bins",
                 )
             )
-            and item["daylight_peer_outlier_bins"] <= allowed_outliers
+            and (
+                item["daily_peer_outlier_days"] == 0
+                if peer_check == "daily"
+                else item["daylight_peer_outlier_bins"] <= allowed_outliers
+            )
         )
         devices.append(item)
     return {
@@ -153,7 +181,8 @@ def screen_baseline(
         "status": "screened_not_manually_verified",
         "screening_version": "m1-v1"
         + ("-large-site" if max_peer_outlier_fraction else "")
-        + ("-daytime-poa" if daytime_site is not None else ""),
+        + ("-daytime-poa" if daytime_site is not None else "")
+        + ("-daily-peer" if peer_check == "daily" else ""),
         "thresholds": {
             "daylight_wm2": DAYLIGHT_WM2,
             "coverage": 0.99,
@@ -174,6 +203,11 @@ def screen_baseline(
         | (
             {"poa_coverage_scope": "sun_above_horizon", "site": list(daytime_site)}
             if daytime_site is not None
+            else {}
+        )
+        | (
+            {"peer_check": "daily_energy", "daily_peer_ratio": [0.85, 1.20]}
+            if peer_check == "daily"
             else {}
         ),
         "limitations": "Heuristic screening may miss persistent faults; no normal ground truth.",

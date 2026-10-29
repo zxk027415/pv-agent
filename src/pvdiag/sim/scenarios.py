@@ -154,6 +154,8 @@ def screening_options(manifest: dict) -> dict:
         if scope.get("scope") != "sun_above_horizon":
             raise ValueError("unsupported POA coverage scope")
         options["daytime_site"] = tuple(scope["site"])
+    if manifest.get("peer_check", "bin") != "bin":
+        options["peer_check"] = manifest["peer_check"]
     return options
 
 

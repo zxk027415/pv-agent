@@ -375,3 +375,39 @@ def test_explicit_compound_candidates_are_hard_observable_and_on_distinct_target
             generate_candidates(*args, per_type=1, normal_count=0, compounds=bad, per_compound=1)
     with pytest.raises(ValueError, match="per-pair count"):
         generate_candidates(*args, per_type=1, normal_count=0, compounds=(("F3", "F5"),))
+
+
+def test_daily_peer_check_tolerates_cloud_jitter_but_rejects_day_scale_loss():
+    from pvdiag.sim.baseline import screen_baseline
+
+    devices = ("inv01", "inv02", "inv03", "inv04")
+    jitter = baseline(days=7)
+    power = (jitter.device_id == "inv01") & (jitter.metric == "ac_power_kw") & (jitter.value > 0)
+    # Alternate +30% / -30% bins: every bin is a peer outlier, daily energy is unchanged.
+    sign = (jitter.ts.dt.minute // 15 % 2 * 2 - 1).astype(float)
+    jitter.loc[power, "value"] *= 1 + 0.3 * sign[power]
+    args = (2107, "2019-01-01", "2019-01-08", devices, "poa")
+    assert "inv01" not in screen_baseline(jitter, *args)["eligible_devices"]
+    daily = screen_baseline(jitter, *args, peer_check="daily")
+    assert daily["screening_version"] == "m1-v1-daily-peer"
+    assert daily["thresholds"]["peer_check"] == "daily_energy"
+    assert set(daily["eligible_devices"]) == set(devices)
+
+    loss = baseline(days=7)
+    one_day = (loss.device_id == "inv01") & (loss.metric == "ac_power_kw") & (loss.ts.dt.date == pd.Timestamp("2019-01-03").date())
+    loss.loc[one_day, "value"] *= 0.5
+    report = screen_baseline(loss, *args, peer_check="daily")
+    assert "inv01" not in report["eligible_devices"]
+    assert next(d for d in report["devices"] if d["device_id"] == "inv01")["daily_peer_outlier_days"] >= 1
+    with pytest.raises(ValueError, match="bin or daily"):
+        screen_baseline(loss, *args, peer_check="weekly")
+
+
+def test_spread_windows_staggers_fault_types_and_normals_across_the_season():
+    frame = baseline(days=49)
+    args = (frame, 2107, "2019-01-01", "2019-02-19", ("inv01", "inv02", "inv03", "inv04"), "poa", "PST8PDT")
+    default = generate_candidates(*args, per_type=1, normal_count=3)
+    spread = generate_candidates(*args, per_type=1, normal_count=3, spread_windows=True)
+    assert len({s.query_window for s in spread if not s.faults}) == 3
+    assert len({s.query_window for s in spread if s.faults}) > len({s.query_window for s in default if s.faults})
+    assert default == generate_candidates(*args, per_type=1, normal_count=3)
