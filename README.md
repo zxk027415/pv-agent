@@ -116,6 +116,16 @@ docker compose up --build
 
 首次启动会先运行一次显式的表初始化服务（`migrate`），成功后再启动 API。默认 profile 是 `config/api.example.json` 中的 B0，不调用大模型。
 
+## 在 Claude Desktop 中使用诊断工具
+
+`config/claude_desktop.example.json` 接入三个只读 MCP 服务（pv-data、pv-analytics、pv-knowledge，共 11 个工具），默认指向 M1 场景 `S2107-F3-0001`；写工单的 pv-ops 不接入。在仓库根目录运行下面的命令，输出就是填好本机路径的配置：
+
+```bash
+sed "s#REPO#$PWD#g" config/claude_desktop.example.json
+```
+
+把输出中的 `mcpServers` 合并进 `~/Library/Application Support/Claude/claude_desktop_config.json`，重启 Claude Desktop 即可在对话里调用这些工具。换场景时修改 `--observations` 指向的 Parquet 文件即可。
+
 ## 安全与数据边界
 
 - 诊断只能读取观测快照，读不到真值、注入参数和基线审核信息；评分在诊断结束后才读取真值。

@@ -1,0 +1,27 @@
+{
+  "mcpServers": {
+    "pv-data": {
+      "command": "REPO/.venv/bin/python",
+      "args": [
+        "-m", "pvdiag.mcp_servers.pv_data",
+        "--observations", "REPO/data/scenarios/S2107-F3-0001/timeseries.parquet",
+        "--metadata", "REPO/data/raw/2107/metadata/2107_system_metadata.json"
+      ],
+      "cwd": "REPO"
+    },
+    "pv-analytics": {
+      "command": "REPO/.venv/bin/python",
+      "args": [
+        "-m", "pvdiag.mcp_servers.pv_analytics",
+        "--observations", "REPO/data/scenarios/S2107-F3-0001/timeseries.parquet",
+        "--metadata", "REPO/data/raw/2107/metadata/2107_system_metadata.json"
+      ],
+      "cwd": "REPO"
+    },
+    "pv-knowledge": {
+      "command": "REPO/.venv/bin/python",
+      "args": ["-m", "pvdiag.mcp_servers.pv_knowledge", "--knowledge-root", "REPO/kb"],
+      "cwd": "REPO"
+    }
+  }
+}
