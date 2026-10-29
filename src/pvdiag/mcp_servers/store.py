@@ -86,6 +86,17 @@ class ObservationStore:
             if unknown:
                 raise ValueError(f"devices outside observation scope: {sorted(unknown)}")
 
+    def channels(self, device_ids, metrics):
+        """Requested device/metric pairs that exist in this snapshot, plus the absent ones."""
+        present, absent = [], []
+        for device in device_ids:
+            for metric in dict.fromkeys(metrics):
+                if metric in self.catalog.get(device, []):
+                    present.append((device, metric))
+                else:
+                    absent.append(f"{device}:{metric}")
+        return present, absent
+
     def sensor(self, device: str, metric: str) -> None:
         if metric not in self.catalog.get(device, []):
             raise ValueError(f"{device} has no observed {metric} channel")

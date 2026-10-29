@@ -432,3 +432,35 @@ def test_streamable_http_transport_is_callable(files, tmp_path):
                 await asyncio.wait_for(process.wait(), timeout=5)
 
     asyncio.run(verify())
+
+
+def test_timeseries_and_quality_skip_channels_absent_from_the_snapshot(tmp_path):
+    import json as _json
+
+    import pandas as _pd
+
+    from pvdiag.mcp_servers.data_tools import DataTools
+    from pvdiag.mcp_servers.models import QualityRequest, TimeseriesRequest
+    from pvdiag.mcp_servers.store import ObservationStore
+
+    ts = _pd.date_range("2019-01-01", periods=96, freq="15min", tz="UTC")
+    rows = [
+        _pd.DataFrame({"ts": ts, "system_id": 2107, "device_id": d, "metric": m, "value": v})
+        for d, m, v in (("inv01", "ac_power_kw", 1.0), ("poa", "poa_wm2", 500.0), ("inv01", "module_c", float("nan")))
+    ]
+    path = tmp_path / "o.parquet"
+    _pd.concat(rows).to_parquet(path, index=False)
+    meta = tmp_path / "m.json"
+    meta.write_text(_json.dumps({"System": {"system_id": 2107, "timezone_code": "PST8PDT"}, "Metrics": {}}))
+    tools = DataTools(ObservationStore(path, meta))
+    window = {"system_id": 2107, "device_ids": ["inv01", "poa"], "start": "2019-01-01", "end": "2019-01-02"}
+    series = tools.get_timeseries(TimeseriesRequest(**window, metrics=["ac_power_kw", "poa_wm2", "module_c"])).result
+    assert [(s.device_id, s.metric) for s in series.series] == [
+        ("inv01", "ac_power_kw"), ("inv01", "module_c"), ("poa", "poa_wm2")
+    ]
+    assert series.unavailable == ["inv01:poa_wm2", "poa:ac_power_kw", "poa:module_c"]
+    # A catalogued but entirely missing channel is still reported, with zero coverage.
+    assert next(s for s in series.series if s.metric == "module_c").coverage == 0.0
+    quality = tools.data_quality(QualityRequest(**window, metrics=["poa_wm2"])).result
+    assert [(s.device_id, s.metric) for s in quality.series] == [("poa", "poa_wm2")]
+    assert quality.unavailable == ["inv01:poa_wm2"]

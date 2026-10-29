@@ -164,6 +164,8 @@ class TimeseriesResult(Model):
     series: list[SeriesSummary]
     truncated: bool
     returned_points: int
+    # Device/metric pairs with no channel in this snapshot ("device:metric"), not fabricated.
+    unavailable: list[str] = Field(default_factory=list)
 
 
 class Span(Model):
@@ -188,6 +190,7 @@ class QualityResult(Model):
     resample: str = "15min"
     series: list[QualitySummary]
     spans_truncated: bool
+    unavailable: list[str] = Field(default_factory=list)
 
 
 class PeerSummary(Model):

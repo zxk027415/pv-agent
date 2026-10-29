@@ -72,7 +72,7 @@ class DataTools:
         self.store.check(request)
         summaries = []
         remaining = request.max_points
-        pairs = [(d, m) for d in request.device_ids for m in dict.fromkeys(request.metrics)]
+        pairs, unavailable = self.store.channels(request.device_ids, request.metrics)
         truncated = False
         for index, (device, metric) in enumerate(pairs):
             series = self.store.series(device, metric, request.start, request.end, request.resample)
@@ -112,6 +112,7 @@ class DataTools:
             series=summaries,
             truncated=truncated,
             returned_points=request.max_points - remaining,
+            unavailable=unavailable,
         )
         return self.store.evidence(
             "get_timeseries",
@@ -124,7 +125,7 @@ class DataTools:
         self.store.check(request)
         summaries = []
         remaining, truncated = 64, False
-        pairs = [(d, m) for d in request.device_ids for m in dict.fromkeys(request.metrics)]
+        pairs, unavailable = self.store.channels(request.device_ids, request.metrics)
         for pair_index, (device, metric) in enumerate(pairs):
             series = self.store.series(device, metric, request.start, request.end)
             difference = series.diff().abs()
@@ -161,7 +162,7 @@ class DataTools:
                     jump_spans=spans[2],
                 )
             )
-        result = QualityResult(series=summaries, spans_truncated=truncated)
+        result = QualityResult(series=summaries, spans_truncated=truncated, unavailable=unavailable)
         return self.store.evidence(
             "data_quality",
             request,
