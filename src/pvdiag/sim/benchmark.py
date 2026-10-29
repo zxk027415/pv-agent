@@ -22,7 +22,15 @@ FAULT_TYPES = ("F1", "F2", "F3", "F4", "F5", "F6")
 
 
 def screened_pool(
-    frame, system_id, start, end, device_ids, poa_device_id, window_days, stride_days=7
+    frame,
+    system_id,
+    start,
+    end,
+    device_ids,
+    poa_device_id,
+    window_days,
+    stride_days=7,
+    max_peer_outlier_fraction=0.0,
 ):
     lower, upper = window_bounds(start, end)
     if not 7 <= window_days <= 90 or stride_days < 1:
@@ -48,12 +56,19 @@ def screened_pool(
             right.isoformat(),
             tuple(sorted(device_ids)),
             poa_device_id,
+            max_peer_outlier_fraction,
         )
         local_cohorts = []
         # Limit combinatorial expansion while retaining distinct normal candidates.
         for selected in list(combinations(report["eligible_devices"], 3))[:20]:
             final = screen_baseline(
-                window, system_id, left.isoformat(), right.isoformat(), selected, poa_device_id
+                window,
+                system_id,
+                left.isoformat(),
+                right.isoformat(),
+                selected,
+                poa_device_id,
+                max_peer_outlier_fraction,
             )
             if set(final["eligible_devices"]) == set(selected):
                 local_cohorts.append((left, right, selected))
@@ -136,6 +151,7 @@ def generate_candidates(
     window_days=35,
     stride_days=7,
     split="dev",
+    max_peer_outlier_fraction=0.0,
 ):
     if not 1 <= per_type <= 100 or not 0 <= normal_count <= 200:
         raise ValueError("invalid candidate counts")
@@ -144,7 +160,15 @@ def generate_candidates(
     if split not in prefixes:
         raise ValueError("candidates are generated only for dev or cross_site")
     pool = screened_pool(
-        frame, system_id, start, end, device_ids, poa_device_id, window_days, stride_days
+        frame,
+        system_id,
+        start,
+        end,
+        device_ids,
+        poa_device_id,
+        window_days,
+        stride_days,
+        max_peer_outlier_fraction,
     )
     if not pool:
         raise ValueError("no screened development cohorts; baseline criteria were not relaxed")
@@ -211,6 +235,12 @@ def main(argv=None):
     parser.add_argument("--window-days", type=int, default=35)
     parser.add_argument("--stride-days", type=int, default=7)
     parser.add_argument("--split", choices=["dev", "cross_site"], default="dev")
+    parser.add_argument(
+        "--max-peer-outlier-fraction",
+        type=float,
+        default=0.0,
+        help="explicit large-site screening tolerance (default 0 = strict m1-v1)",
+    )
     parser.add_argument("--manifest", type=Path, default=Path("bench/m2_dev_candidates.json"))
     parser.add_argument("--dest", type=Path, default=Path("data/m2_candidates"))
     args = parser.parse_args(argv)
@@ -229,6 +259,7 @@ def main(argv=None):
         window_days=args.window_days,
         stride_days=args.stride_days,
         split=args.split,
+        max_peer_outlier_fraction=args.max_peer_outlier_fraction,
     )
     manifest = {
         "schema_version": 2,
@@ -243,6 +274,8 @@ def main(argv=None):
         "site_timezone": args.timezone,
         "scenarios": [],
     }
+    if args.max_peer_outlier_fraction:
+        manifest["max_peer_outlier_fraction"] = args.max_peer_outlier_fraction
     for scenario in scenarios:
         observation, audit = materialize_scenario(frame, scenario)
         destination = args.dest / scenario.scenario_id

@@ -313,3 +313,21 @@ def test_cross_site_candidates_are_tagged_and_never_mix_with_dev_scenes():
         validate_split_isolation(dev + cross)
     with pytest.raises(ValueError, match="only for dev or cross_site"):
         generate_candidates(*args, per_type=1, normal_count=1, split="test")
+
+
+def test_large_site_tolerance_is_explicit_bounded_and_versioned():
+    from pvdiag.sim.baseline import screen_baseline
+
+    frame = baseline(days=7)
+    # One cloud-shadow-like daylight bin where a single inverter dips alone.
+    dip = (frame.device_id == "inv01") & (frame.metric == "ac_power_kw") & (frame.ts == pd.Timestamp("2019-01-03 18:00", tz="UTC"))
+    frame.loc[dip, "value"] *= 0.5
+    args = (frame, 2107, "2019-01-01", "2019-01-08", ("inv01", "inv02", "inv03", "inv04"), "poa")
+    strict = screen_baseline(*args)
+    assert strict["screening_version"] == "m1-v1" and "inv01" not in strict["eligible_devices"]
+    tolerant = screen_baseline(*args, max_peer_outlier_fraction=0.01)
+    assert tolerant["screening_version"] == "m1-v1-large-site"
+    assert tolerant["thresholds"]["allowed_peer_outlier_bins"] >= 1
+    assert "inv01" in tolerant["eligible_devices"]
+    with pytest.raises(ValueError, match="between 0 and 5%"):
+        screen_baseline(*args, max_peer_outlier_fraction=0.2)

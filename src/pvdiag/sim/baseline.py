@@ -68,6 +68,7 @@ def screen_baseline(
     end: str,
     device_ids: tuple[str, ...],
     poa_device_id: str,
+    max_peer_outlier_fraction: float = 0.0,
 ) -> dict:
     """Select devices with full daylight data and no obvious peer outliers.
 
@@ -75,13 +76,21 @@ def screen_baseline(
     A device is rejected for any daylight missing/near-zero/negative value, or
     any daylight normalized leave-one-out peer ratio outside [0.85, 1.20].
     At least two valid peers are required for every daylight comparison.
+
+    ``max_peer_outlier_fraction`` > 0 is an explicit, separately versioned rule for
+    large sites, where passing cloud shadows desynchronize distant inverters: up to
+    floor(fraction x daylight bins) peer-ratio outliers are tolerated. Every other
+    criterion is unchanged; the default keeps the strict m1-v1 rule.
     """
+    if not 0.0 <= max_peer_outlier_fraction <= 0.05:
+        raise ValueError("peer outlier tolerance must be between 0 and 5% of daylight bins")
     validate_frame(frame, system_id)
     lower, upper = window_bounds(start, end)
     if len(set(device_ids)) != len(device_ids) or len(device_ids) < 3:
         raise ValueError("screening requires at least three distinct inverter IDs")
     power, poa = aligned_signals(frame, start, end, device_ids, poa_device_id)
     daylight = poa > DAYLIGHT_WM2
+    allowed_outliers = int(max_peer_outlier_fraction * int(daylight.sum()))
     scales = power[daylight].quantile(0.95)
     normalized = power.div(scales.where(scales > 0), axis="columns")
     devices = []
@@ -111,9 +120,9 @@ def screen_baseline(
                     "daylight_near_zero_bins",
                     "negative_power_bins",
                     "daylight_uncomparable_bins",
-                    "daylight_peer_outlier_bins",
                 )
             )
+            and item["daylight_peer_outlier_bins"] <= allowed_outliers
         )
         devices.append(item)
     return {
@@ -126,7 +135,7 @@ def screen_baseline(
         "devices": devices,
         "eligible_devices": [d["device_id"] for d in devices if d["eligible"]],
         "status": "screened_not_manually_verified",
-        "screening_version": "m1-v1",
+        "screening_version": "m1-v1-large-site" if max_peer_outlier_fraction else "m1-v1",
         "thresholds": {
             "daylight_wm2": DAYLIGHT_WM2,
             "coverage": 0.99,
@@ -134,7 +143,16 @@ def screen_baseline(
             "near_zero_kw": 0.1,
             "peer_ratio": [0.85, 1.20],
             "minimum_valid_peers": 2,
-        },
+        }
+        # Only the explicit large-site rule adds fields, so strict reports stay byte-identical.
+        | (
+            {
+                "max_peer_outlier_fraction": max_peer_outlier_fraction,
+                "allowed_peer_outlier_bins": allowed_outliers,
+            }
+            if max_peer_outlier_fraction
+            else {}
+        ),
         "limitations": "Heuristic screening may miss persistent faults; no normal ground truth.",
     }
 
