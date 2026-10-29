@@ -50,9 +50,10 @@ def leaked(patch, identifiers):
     return sorted(found)
 
 
-def max_diagnoses(scenarios, rounds, patches):
-    """Upper bound on diagnosis runs: round 0, then every patch probe and one composite per round."""
-    return scenarios + rounds * (patches * scenarios + scenarios)
+def max_diagnoses(scenarios, rounds, patches, generated=0):
+    """Upper bound on diagnosis runs: round 0, then per round the generated probe scenes on the
+    current harness, every patch probe (core + generated) and one composite over the core set."""
+    return scenarios + rounds * (generated + patches * (scenarios + generated) + scenarios)
 
 
 def summarize(evaluation, categories):
@@ -104,6 +105,7 @@ async def run_evolution(
     probe_sample=4,
     seed=0,
     faults_only=False,
+    scene_source=None,
 ):
     scenarios = manifest.get("scenarios", [])
     if not scenarios or any(s["split"] != "dev" for s in scenarios):
@@ -153,6 +155,7 @@ async def run_evolution(
             "probe_sample": probe_sample,
             "seed": seed,
             "faults_only": faults_only,
+            "generated_probe_scenes": getattr(scene_source, "per_round", 0),
         },
         "evaluator": getattr(evaluator, "metadata", {}),
         "proposer": getattr(proposer, "metadata", {}),
@@ -182,7 +185,11 @@ async def run_evolution(
             proposed = await proposer.propose(
                 current,
                 [
-                    {"scenario_id": sid, "case": current_eval[sid]["case"], "run": current_eval[sid]["run"]}
+                    {
+                        "scenario_id": sid,
+                        "case": current_eval[sid]["case"],
+                        "run": current_eval[sid]["run"],
+                    }
                     for sid in failures
                 ],
                 patches_per_round,
@@ -195,12 +202,44 @@ async def run_evolution(
         if len(proposed) > patches_per_round:
             raise ValueError("proposer exceeded the per-round patch budget")
         passing = sorted(set(ids) - set(failures))
-        probe_ids = sorted(set(failures) | set(rng.sample(passing, min(probe_sample, len(passing)))))
-        base_probe = summarize(restrict(current_eval, probe_ids), categories)
+        probe_ids = sorted(
+            set(failures) | set(rng.sample(passing, min(probe_sample, len(passing))))
+        )
+        probe_base = restrict(current_eval, probe_ids)
+        generated = {"scenario_ids": [], "report": None}
+        if scene_source is not None:
+            # Generated scenes only widen this round's probes; adoption stays on the fixed
+            # core set, so the development curve remains comparable across rounds.
+            try:
+                extra, report = await scene_source.extend(
+                    number,
+                    {
+                        "manifest_sha256": ledger["manifest_sha256"],
+                        "cases": [current_eval[sid]["case"] for sid in ids],
+                    },
+                )
+            except ValueError as error:
+                generated["error"] = str(error)
+            else:
+                extra_ids = [scene["scenario_id"] for scene in extra]
+                if (
+                    any(scene["split"] != "dev" or not scene["faults"] for scene in extra)
+                    or len(set(extra_ids)) != len(extra_ids)
+                    or set(extra_ids) & set(categories)
+                ):
+                    raise ValueError("generated probe scenes must be new development fault scenes")
+                categories.update({scene["scenario_id"]: category(scene) for scene in extra})
+                identifiers |= benchmark_identifiers(extra)
+                if extra_ids:
+                    probe_base |= await evaluate(current, extra_ids, f"round{number}-generated")
+                generated = {"scenario_ids": sorted(extra_ids), "report": report}
+        probe_ids = sorted(probe_base)
+        base_probe = summarize(probe_base, categories)
         record = {
             "round": number,
             "parent_harness_sha256": current.sha256,
             "probe_scenario_ids": probe_ids,
+            "generated_probe_scenes": generated,
             "base_probe": base_probe,
             "patches": [],
             "composite": None,
@@ -235,7 +274,10 @@ async def run_evolution(
                     categories,
                 )
                 entry |= {"probe": probe, "regressed_categories": regressed(probe, base_probe)}
-                if probe["pass_rate"] > base_probe["pass_rate"] and not entry["regressed_categories"]:
+                if (
+                    probe["pass_rate"] > base_probe["pass_rate"]
+                    and not entry["regressed_categories"]
+                ):
                     entry["outcome"] = "probe_effective"
                     effective.append((probe["pass_rate"], patch))
                 else:

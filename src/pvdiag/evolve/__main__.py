@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import hashlib
 import json
 from argparse import Namespace
 from pathlib import Path
@@ -9,7 +10,7 @@ from pathlib import Path
 from pvdiag.agent.__main__ import add_model_arguments, reasoner_from_args
 from pvdiag.evolve.loop import MAX_PATCHES, MAX_ROUNDS, category, max_diagnoses, run_evolution
 from pvdiag.evolve.proposer import LLMPatchProposer
-from pvdiag.evolve.runners import BenchEvaluator, FilePatchProposer
+from pvdiag.evolve.runners import BenchEvaluator, FilePatchProposer, GeneratedScenes
 from pvdiag.knowledge.store import KnowledgeStore
 from pvdiag.mcp_servers.pv_knowledge import add_knowledge_arguments, knowledge_from_args
 from pvdiag.memory.cli import memory_from_args
@@ -46,6 +47,15 @@ def main(argv=None):
     parser.add_argument("--review-bundle", type=Path)
     parser.add_argument("--faults-only", action="store_true")
     parser.add_argument(
+        "--generate-scenes",
+        type=int,
+        default=0,
+        help="per-round failure-driven probe scenes (development pool only; 0 disables)",
+    )
+    parser.add_argument("--source", type=Path, default=Path("data/clean/2107.parquet"))
+    parser.add_argument("--scene-window-days", type=int)
+    parser.add_argument("--site-timezone", help="only when the manifest omits it")
+    parser.add_argument(
         "--max-total-model-calls",
         type=int,
         help="LLM mode: refuse to start unless the worst-case call bound fits this cap",
@@ -81,7 +91,17 @@ def main(argv=None):
         if args.max_proposer_calls or args.allow_proposer_calls:
             parser.error("proposer call options only apply to --proposer-model")
         patch_proposer = FilePatchProposer(args.proposer_file)
-    bound = max_diagnoses(len(scenarios), args.rounds, args.patches)
+    if args.generate_scenes < 0:
+        parser.error("--generate-scenes cannot be negative")
+    frame = source_sha = None
+    if args.generate_scenes:
+        import pandas as pd
+
+        source_sha = hashlib.sha256(args.source.read_bytes()).hexdigest()
+        if source_sha != manifest.get("source_sha256"):
+            parser.error("--source differs from the manifest's source snapshot")
+        frame = pd.read_parquet(args.source)
+    bound = max_diagnoses(len(scenarios), args.rounds, args.patches, args.generate_scenes)
     if args.mode == "llm":
         calls = bound * args.max_model_calls
         if args.max_total_model_calls is None or calls > args.max_total_model_calls:
@@ -117,6 +137,20 @@ def main(argv=None):
                 harness_sensitive=args.mode == "llm",
             )
             evaluator.metadata["max_diagnoses"] = bound
+            scenes = (
+                GeneratedScenes(
+                    frame,
+                    manifest,
+                    evaluator,
+                    args.output / "generated",
+                    args.generate_scenes,
+                    source_sha256=source_sha,
+                    window_days=args.scene_window_days,
+                    timezone=args.site_timezone,
+                )
+                if args.generate_scenes
+                else None
+            )
             return await run_evolution(
                 manifest,
                 evaluator,
@@ -128,6 +162,7 @@ def main(argv=None):
                 probe_sample=args.probe_sample,
                 seed=args.seed,
                 faults_only=args.faults_only,
+                scene_source=scenes,
             )
 
     try:

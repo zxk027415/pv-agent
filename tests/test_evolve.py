@@ -17,7 +17,7 @@ from pvdiag.evolve.__main__ import main as evolve_main
 from pvdiag.evolve.harness import EDITABLE, REPO, Harness, Patch, PatchConflict
 from pvdiag.evolve.loop import leaked, run_evolution
 from pvdiag.evolve.proposer import LLMPatchProposer, PatchProposal
-from pvdiag.evolve.runners import BenchEvaluator, FilePatchProposer
+from pvdiag.evolve.runners import BenchEvaluator, FilePatchProposer, GeneratedScenes
 from pvdiag.knowledge.store import KnowledgeStore
 from pvdiag.memory.models import MemoryLesson
 
@@ -90,13 +90,14 @@ class MarkerEvaluator:
     def __init__(self):
         self.metadata = {"kind": "marker-fixture"}
         self.calls = []
+        self.kinds = dict(SCENES)
 
     async def evaluate(self, harness, scenario_ids, label):
         prompt = harness.files[PROMPT]
         self.calls.append((label, list(scenario_ids)))
         result = {}
         for sid in scenario_ids:
-            kind = SCENES[sid]
+            kind = self.kinds[sid]
             passed = {
                 "F3": "FIX_F3" in prompt,
                 "F4": "FIX_F4" in prompt,
@@ -377,3 +378,115 @@ def test_exhausted_or_failing_proposer_stops_cleanly_with_the_adopted_harness(
     assert json.loads((tmp_path / "evo" / "ledger.json").read_text())["stopped"]["round"] == 2
     with pytest.raises(ValueError, match="explicit LLM"):
         LLMPatchProposer(RuleReasoner(), categories)
+
+
+class FakeScenes:
+    per_round = 2
+
+    def __init__(self, evaluator, bad=None):
+        self.evaluator, self.bad, self.summaries = evaluator, bad, []
+
+    async def extend(self, number, summary):
+        self.summaries.append(summary)
+        if self.bad == "raise":
+            raise ValueError("no development fault failures to target")
+        scenes = [
+            {
+                "scenario_id": f"gen{number}-f3-{i}",
+                "split": "test" if self.bad == "heldout" else "dev",
+                "device_ids": ["inv01", "inv02", "inv03"],
+                "faults": [{"type": "F3", "device_id": "inv02"}],
+            }
+            for i in (1, 2)
+        ]
+        for scene in scenes:
+            self.evaluator.kinds[scene["scenario_id"]] = "F3"
+        return scenes, {"allocation": {"F3": 2}}
+
+
+def test_generated_scenes_widen_probes_but_adoption_stays_on_the_fixed_core_set(tmp_path):
+    evaluator = MarkerEvaluator()
+    scenes = FakeScenes(evaluator)
+    ledger = asyncio.run(
+        run_evolution(
+            manifest(),
+            evaluator,
+            Scripted([[patch("FIX_F3", "F3 漏检")]]),
+            tmp_path / "evo",
+            rounds=1,
+            probe_sample=0,
+            scene_source=scenes,
+        )
+    )
+    record = ledger["rounds"][0]
+    assert record["generated_probe_scenes"]["scenario_ids"] == ["gen1-f3-1", "gen1-f3-2"]
+    assert {"gen1-f3-1", "gen1-f3-2"} <= set(record["probe_scenario_ids"])
+    assert record["base_probe"]["scenarios"] == 5 + 2
+    assert record["base_probe"]["by_category"]["F3"] == 0.0
+    labels = [label for label, _ in evaluator.calls]
+    assert labels[:2] == ["round0-base", "round1-generated"]
+    assert dict(evaluator.calls)["round1-generated"] == ["gen1-f3-1", "gen1-f3-2"]
+    assert record["composite"]["development"]["scenarios"] == 6
+    assert [p["development"]["scenarios"] for p in ledger["curve"]] == [6, 6]
+    assert [p["development"]["pass_rate"] for p in ledger["curve"]] == [1 / 6, 3 / 6]
+    summary = scenes.summaries[0]
+    assert summary["manifest_sha256"] == ledger["manifest_sha256"]
+    assert {c["scenario_id"] for c in summary["cases"]} == set(SCENES)
+    assert ledger["policy"]["generated_probe_scenes"] == 2
+
+
+def test_generation_gaps_are_recorded_but_heldout_or_colliding_scenes_abort(tmp_path):
+    evaluator = MarkerEvaluator()
+    ledger = asyncio.run(
+        run_evolution(
+            manifest(),
+            evaluator,
+            Scripted([[patch("FIX_F3")]]),
+            tmp_path / "gap",
+            rounds=1,
+            scene_source=FakeScenes(evaluator, bad="raise"),
+        )
+    )
+    assert ledger["rounds"][0]["generated_probe_scenes"]["error"].startswith("no development")
+    evaluator = MarkerEvaluator()
+    with pytest.raises(ValueError, match="new development fault scenes"):
+        asyncio.run(
+            run_evolution(
+                manifest(),
+                evaluator,
+                Scripted([[patch("FIX_F3")]]),
+                tmp_path / "held",
+                rounds=1,
+                scene_source=FakeScenes(evaluator, bad="heldout"),
+            )
+        )
+    assert loop.max_diagnoses(6, 2, 4, 3) == 6 + 2 * (3 + 4 * 9 + 6)
+
+
+def test_generated_scene_source_writes_tagged_pools_per_round(tmp_path):
+    from test_scenario_gen import cloudy_frame, parent, summary
+
+    frame = cloudy_frame()
+    base = parent(frame, "a" * 64)
+
+    class Pools:
+        def __init__(self):
+            self.added = []
+
+        def add_pool(self, name, pool, root):
+            self.added.append((name, len(pool["scenarios"]), root))
+
+    pools = Pools()
+    with pytest.raises(ValueError, match="source differs"):
+        GeneratedScenes(frame, base, pools, tmp_path, 2, source_sha256="b" * 64)
+    source = GeneratedScenes(frame, base, pools, tmp_path, 2, source_sha256="a" * 64)
+    first, report = asyncio.run(source.extend(1, summary(base)))
+    second, _ = asyncio.run(source.extend(2, summary(base)))
+    assert report["config"]["label"] == "round1"
+    assert {s["scenario_id"] for s in first}.isdisjoint(s["scenario_id"] for s in second)
+    assert [name for name, _, _ in pools.added] == ["generated-round1", "generated-round2"]
+    assert all(s["split"] == "dev" and s["faults"] for s in first + second)
+    written = json.loads((tmp_path / "round1" / "manifest.json").read_text())
+    assert written["source_sha256"] == "a" * 64 and len(written["scenarios"]) == 2
+    for scene in first:
+        assert (tmp_path / "round1" / "scenes" / scene["scenario_id"] / "timeseries.parquet").exists()

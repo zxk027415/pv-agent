@@ -83,7 +83,9 @@ def interleaved(pool, cloudiness):
     return [pool[i] for i in order]
 
 
-def generate_from_failures(frame, manifest, summary, budget, *, window_days=None, stride_days=7):
+def generate_from_failures(
+    frame, manifest, summary, budget, *, window_days=None, stride_days=7, timezone=None, label=None
+):
     scenes = manifest.get("scenarios", [])
     if not scenes or any(s["split"] != "dev" for s in scenes):
         raise ValueError("scene generation only reads development manifests")
@@ -96,7 +98,10 @@ def generate_from_failures(frame, manifest, summary, budget, *, window_days=None
     system_id, poa_device_id = systems.pop(), sensors.pop()
     profile, normal = failure_profile(manifest, summary)
     counts = allocate(profile, budget)
-    window_days = window_days or manifest["window_days"]
+    window_days = window_days or manifest.get("window_days")
+    timezone = manifest.get("site_timezone") or timezone
+    if not window_days or not timezone:
+        raise ValueError("set the window length and site timezone the parent manifest omits")
     config = {
         "generator_version": GENERATOR_VERSION,
         "parent_manifest_sha256": manifest_sha256(manifest),
@@ -104,7 +109,8 @@ def generate_from_failures(frame, manifest, summary, budget, *, window_days=None
         "budget": budget,
         "window_days": window_days,
         "stride_days": stride_days,
-    }
+        "site_timezone": timezone,
+    } | ({"label": label} if label is not None else {})
     tag = digest(config)[:8]
     start, end = manifest["selection_window"]
     pool = screened_pool(
@@ -147,7 +153,7 @@ def generate_from_failures(frame, manifest, summary, budget, *, window_days=None
                     right,
                     selected,
                     poa_device_id,
-                    manifest["site_timezone"],
+                    timezone,
                     number,
                     count,
                     frame,
@@ -187,6 +193,33 @@ def generate_from_failures(frame, manifest, summary, budget, *, window_days=None
     return generated, details, report
 
 
+def write_pool(frame, scenarios, details, report, parent, source_sha, dest):
+    """Write observations/truth/audit per scene and return the generated manifest."""
+    output = {
+        "schema_version": 2,
+        "generator_version": GENERATOR_VERSION,
+        "purpose": "development_pool_generated_from_failures_not_heldout",
+        "source_sha256": source_sha,
+        "selection_window": parent["selection_window"],
+        "development_devices": parent["development_devices"],
+        "window_days": report["config"]["window_days"],
+        "site_timezone": report["config"]["site_timezone"],
+        "generation": report,
+        "scenarios": [],
+    }
+    for scenario in scenarios:
+        observation, audit = materialize_scenario(frame, scenario)
+        destination = Path(dest) / scenario.scenario_id
+        destination.mkdir(parents=True, exist_ok=False)
+        observation.to_parquet(destination / "timeseries.parquet", index=False)
+        (destination / "truth.json").write_text(json.dumps(scenario.to_dict(), indent=2) + "\n")
+        (destination / "audit.json").write_text(json.dumps(audit, indent=2, allow_nan=False) + "\n")
+        output["scenarios"].append(
+            scenario.to_dict() | audit | {"generation": details[scenario.scenario_id]}
+        )
+    return output
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", type=Path, required=True, help="parent development manifest")
@@ -195,6 +228,7 @@ def main(argv=None):
     parser.add_argument("--budget", type=int, default=30)
     parser.add_argument("--window-days", type=int)
     parser.add_argument("--stride-days", type=int, default=7)
+    parser.add_argument("--site-timezone", help="only when the parent manifest omits it")
     parser.add_argument("--output", type=Path, required=True, help="new generated manifest")
     parser.add_argument("--dest", type=Path, default=Path("data/generated"))
     args = parser.parse_args(argv)
@@ -213,31 +247,11 @@ def main(argv=None):
             args.budget,
             window_days=args.window_days,
             stride_days=args.stride_days,
+            timezone=args.site_timezone,
         )
     except ValueError as error:
         parser.exit(2, f"{error}\n")
-    output = {
-        "schema_version": 2,
-        "generator_version": GENERATOR_VERSION,
-        "purpose": "development_pool_generated_from_failures_not_heldout",
-        "source_sha256": source_sha,
-        "selection_window": manifest["selection_window"],
-        "development_devices": manifest["development_devices"],
-        "window_days": report["config"]["window_days"],
-        "site_timezone": manifest["site_timezone"],
-        "generation": report,
-        "scenarios": [],
-    }
-    for scenario in scenarios:
-        observation, audit = materialize_scenario(frame, scenario)
-        destination = args.dest / scenario.scenario_id
-        destination.mkdir(parents=True, exist_ok=False)
-        observation.to_parquet(destination / "timeseries.parquet", index=False)
-        (destination / "truth.json").write_text(json.dumps(scenario.to_dict(), indent=2) + "\n")
-        (destination / "audit.json").write_text(json.dumps(audit, indent=2, allow_nan=False) + "\n")
-        output["scenarios"].append(
-            scenario.to_dict() | audit | {"generation": details[scenario.scenario_id]}
-        )
+    output = write_pool(frame, scenarios, details, report, manifest, source_sha, args.dest)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(output, indent=2, allow_nan=False) + "\n")
     print(
