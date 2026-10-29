@@ -298,3 +298,18 @@ def test_candidate_cli_outputs_observations_truth_and_versioned_manifest(tmp_pat
     assert spec["generator_version"] == "m2-v1" and len(spec["scenarios"]) == 8
     for item in spec["scenarios"]:
         assert (dest / item["scenario_id"] / "timeseries.parquet").exists()
+
+
+def test_cross_site_candidates_are_tagged_and_never_mix_with_dev_scenes():
+    from pvdiag.sim.scenarios import validate_split_isolation
+
+    frame = baseline(days=49)
+    args = (frame, 2107, "2019-01-01", "2019-02-19", ("inv01", "inv02", "inv03", "inv04"), "poa", "PST8PDT")
+    cross = generate_candidates(*args, per_type=1, normal_count=1, split="cross_site")
+    assert {s.split for s in cross} == {"cross_site"}
+    assert all(s.scenario_id.startswith("X2107-") for s in cross)
+    dev = generate_candidates(*args, per_type=1, normal_count=1)
+    with pytest.raises(ValueError, match="cross-site"):
+        validate_split_isolation(dev + cross)
+    with pytest.raises(ValueError, match="only for dev or cross_site"):
+        generate_candidates(*args, per_type=1, normal_count=1, split="test")

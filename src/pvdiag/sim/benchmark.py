@@ -135,9 +135,14 @@ def generate_candidates(
     normal_count=20,
     window_days=35,
     stride_days=7,
+    split="dev",
 ):
     if not 1 <= per_type <= 100 or not 0 <= normal_count <= 200:
         raise ValueError("invalid candidate counts")
+    # Held-out ("test") scenes are not generated here; cross-site scenes never tune anything.
+    prefixes = {"dev": "D", "cross_site": "X"}
+    if split not in prefixes:
+        raise ValueError("candidates are generated only for dev or cross_site")
     pool = screened_pool(
         frame, system_id, start, end, device_ids, poa_device_id, window_days, stride_days
     )
@@ -156,12 +161,13 @@ def generate_candidates(
                 # beyond the design's physical rate limits to make them detectable.
                 difficulty = "hard" if window_days < 21 and kind in {"F1", "F5"} else "medium"
                 scenario = Scenario(
-                    f"D{system_id}-{kind}-{number:04d}",
+                    f"{prefixes[split]}{system_id}-{kind}-{number:04d}",
                     system_id,
                     (left.isoformat(), right.isoformat()),
                     selected,
                     poa_device_id,
                     (fault,),
+                    split=split,
                     difficulty=difficulty,
                 )
                 materialize_scenario(frame, scenario)
@@ -178,12 +184,13 @@ def generate_candidates(
     for number, (left, right, selected) in enumerate(pool[:normal_count], start=1):
         scenarios.append(
             Scenario(
-                f"D{system_id}-N-{number:04d}",
+                f"{prefixes[split]}{system_id}-N-{number:04d}",
                 system_id,
                 (left.isoformat(), right.isoformat()),
                 selected,
                 poa_device_id,
                 (),
+                split=split,
             )
         )
     validate_split_isolation(scenarios)
@@ -203,6 +210,7 @@ def main(argv=None):
     parser.add_argument("--normal-count", type=int, default=20)
     parser.add_argument("--window-days", type=int, default=35)
     parser.add_argument("--stride-days", type=int, default=7)
+    parser.add_argument("--split", choices=["dev", "cross_site"], default="dev")
     parser.add_argument("--manifest", type=Path, default=Path("bench/m2_dev_candidates.json"))
     parser.add_argument("--dest", type=Path, default=Path("data/m2_candidates"))
     args = parser.parse_args(argv)
@@ -220,11 +228,14 @@ def main(argv=None):
         normal_count=args.normal_count,
         window_days=args.window_days,
         stride_days=args.stride_days,
+        split=args.split,
     )
     manifest = {
         "schema_version": 2,
         "generator_version": "m2-v1",
-        "purpose": "development_candidates_not_final_benchmark",
+        "purpose": "development_candidates_not_final_benchmark"
+        if args.split == "dev"
+        else "cross_site_candidates_never_used_for_tuning",
         "source_sha256": hashlib.sha256(args.source.read_bytes()).hexdigest(),
         "selection_window": list(map(str, window_bounds(args.start, args.end))),
         "development_devices": sorted(args.devices),
@@ -243,7 +254,7 @@ def main(argv=None):
     args.manifest.parent.mkdir(parents=True, exist_ok=True)
     args.manifest.write_text(json.dumps(manifest, indent=2, allow_nan=False) + "\n")
     print(
-        f"{args.manifest}: {len(scenarios)} development candidates; normal candidates are not scoring eligible"
+        f"{args.manifest}: {len(scenarios)} {args.split} candidates; normal candidates are not scoring eligible"
     )
     return 0
 
