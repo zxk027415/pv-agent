@@ -395,3 +395,32 @@ def test_persistent_contract_binds_ablation_configuration(observation, monkeypat
         assert contracts[0] != contracts[1]
 
     asyncio.run(verify())
+
+
+def test_report_author_sees_verification_feedback_except_in_feedback_free_ablations(
+    observation, monkeypatch
+):
+    calls = {"n": 0}
+
+    def handler(payload, schema):
+        if schema is Plan:
+            return Plan(calls=[])
+        calls["n"] += 1
+        summary = "第 1 轮结论" if calls["n"] == 1 else "现有观测不足以区分故障原因。"
+        return DiagnosisReport(status="inconclusive", summary=summary)
+
+    attempts = offline_model(monkeypatch, handler)
+    asyncio.run(run_diagnosis(ObservationStore(*observation), request(), LLMReasoner("offline")))
+    hypotheses = [a for a in attempts if a["task"] == "hypothesize"]
+    assert hypotheses[0]["verification_issues"] == []
+    second = hypotheses[1]["verification_issues"]
+    assert [i["code"] for i in second] == ["uncited_number_in_summary"]
+    assert "数字字符" in second[0]["message"]
+
+    calls["n"] = 0
+    attempts.clear()
+    asyncio.run(
+        run_diagnosis(ObservationStore(*observation), request(), LLMReasoner("offline"), ablation="A1")
+    )
+    hypotheses = [a for a in attempts if a["task"] == "hypothesize"]
+    assert all(h["verification_issues"] == [] and h["critique"] == [] for h in hypotheses)

@@ -474,3 +474,60 @@ def test_citation_details_name_the_failing_entry_and_how_to_repair_it():
     assert "/result/series 只有 1 个元素（下标 0 至 0）" in details[0]["text"]
     assert "证据中的值为 26.5" in details[1]["text"]
     assert all(d["finding_index"] == 0 and d["evidence_id"] == "ev_a" for d in details)
+
+
+def test_out_of_range_citation_feedback_reaches_the_next_hypothesis_and_allows_repair(tmp_path):
+    # Mirrors the third DeepSeek pilot: a correct verdict with one citation at an
+    # array index past the end. The next hypothesis call must see which entry failed
+    # and the real array length, and a repaired report must then pass.
+    import re
+
+    store, request, _, _, _ = context(tmp_path, "F3")
+    seen = []
+
+    class OffByIndex(RuleReasoner):
+        async def plan(self, state, tools, prompt):
+            # Gather all evidence up front (as in the review-feedback test) so a verdict
+            # is available in the first loop and a repair loop remains.
+            args = {
+                "system_id": 2107,
+                "device_ids": DEVICES,
+                "start": "2019-01-04T16:00:00Z",
+                "end": "2019-01-04T18:00:00Z",
+            }
+            peer = args | {
+                "poa_device_id": "poa",
+                "reference_start": "2019-01-01",
+                "reference_end": "2019-01-03",
+            }
+            return Plan(
+                calls=[
+                    ToolCall(name="data_quality", arguments=args),
+                    *[
+                        ToolCall(name=name, arguments=peer)
+                        for name in ("peer_compare", "profile_pattern", "detect_anomalies")
+                    ],
+                ]
+            )
+
+        async def hypothesize(self, state, prompt):
+            report = await super().hypothesize(state, prompt)
+            if seen:
+                issues = state["verification"][-1].issues
+                seen.append([i.message for i in issues if i.code == "invalid_numeric_citation"])
+            elif report.findings and report.findings[0].numbers:
+                seen.append(state["loops"])
+                data = report.model_dump(mode="json")
+                claim = data["findings"][0]["numbers"][0]
+                claim["path"] = re.sub(r"/\d+/", "/99/", claim["path"], count=1)
+                return DiagnosisReport.model_validate(data)
+            return report
+
+    result = asyncio.run(run_diagnosis(store, request, OffByIndex(), verification_mode="domain"))
+    assert seen[0] == 1, "the corrupted verdict must come from the first loop"
+    assert result.report.status == "fault" and result.loops == 2 and len(seen) == 2
+    assert [record.passed for record in result.verification] == [False, True]
+    feedback = seen[1]
+    assert len(feedback) == 1
+    assert "numbers[0]" in feedback[0] and "/99/" in feedback[0]
+    assert re.search(r"只有 \d+ 个元素（下标 0 至 \d+）", feedback[0])

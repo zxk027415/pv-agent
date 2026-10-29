@@ -180,6 +180,14 @@ class LLMReasoner:
                 "task": "hypothesize",
                 "request": state["request"].model_dump(mode="json"),
                 "evidence": state["evidence"],
+                # The report author must see why the previous report failed; A0-A2 states
+                # arrive with these cleared, so no feedback leaks into those ablations.
+                "critique": state.get("critique", []),
+                "verification_issues": [
+                    issue.model_dump() for issue in state["verification"][-1].issues
+                ]
+                if state.get("verification")
+                else [],
                 **({"memory": state["memory"]} if state.get("memory") is not None else {}),
             },
             prompt,
