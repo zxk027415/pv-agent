@@ -338,3 +338,22 @@ def test_f5_target_isolation_includes_sensor_ids_even_when_all_inverters_and_dat
         faults=(replace(heldout.faults[0], device_id="independent_poa"),),
     )
     validate_split_isolation([dev, other])
+
+
+def test_heldout_baselines_can_be_reviewed_but_never_mixed_or_benchmarked(review_fixture, tmp_path):
+    import asyncio
+    from copy import deepcopy
+
+    from pvdiag.eval.run_bench import run_benchmark
+
+    manifest, source, metadata, root, bundle = review_fixture
+    held = deepcopy(manifest)
+    for scene in held["scenarios"]:
+        scene["split"] = "test"
+    prepare(held, source, metadata, root, bundle)
+    mixed = deepcopy(manifest)
+    mixed["scenarios"][0]["split"] = "test"
+    with pytest.raises(ValueError, match="exactly one dev or test split|overlap"):
+        prepare(mixed, source, metadata, root, tmp_path / "mixed")
+    with pytest.raises(ValueError, match="only permits development"):
+        asyncio.run(run_benchmark(held, root, metadata, tmp_path / "out", lambda: None))

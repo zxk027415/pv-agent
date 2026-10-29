@@ -69,6 +69,7 @@ def screen_baseline(
     device_ids: tuple[str, ...],
     poa_device_id: str,
     max_peer_outlier_fraction: float = 0.0,
+    daytime_site: tuple[float, float] | None = None,
 ) -> dict:
     """Select devices with full daylight data and no obvious peer outliers.
 
@@ -81,6 +82,11 @@ def screen_baseline(
     large sites, where passing cloud shadows desynchronize distant inverters: up to
     floor(fraction x daylight bins) peer-ratio outliers are tolerated. Every other
     criterion is unchanged; the default keeps the strict m1-v1 rule.
+
+    ``daytime_site=(latitude, longitude)`` is a second explicit rule: POA coverage is
+    measured only over bins with the sun above the horizon (pvlib solar position),
+    so night-time logger gaps no longer reject a window. Daylight device checks
+    are unchanged.
     """
     if not 0.0 <= max_peer_outlier_fraction <= 0.05:
         raise ValueError("peer outlier tolerance must be between 0 and 5% of daylight bins")
@@ -90,6 +96,16 @@ def screen_baseline(
         raise ValueError("screening requires at least three distinct inverter IDs")
     power, poa = aligned_signals(frame, start, end, device_ids, poa_device_id)
     daylight = poa > DAYLIGHT_WM2
+    coverage_bins = poa.index
+    if daytime_site is not None:
+        from pvlib.solarposition import get_solarposition
+
+        latitude, longitude = daytime_site
+        if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
+            raise ValueError("invalid site coordinates")
+        elevation = get_solarposition(poa.index, latitude, longitude)["apparent_elevation"]
+        coverage_bins = poa.index[elevation.to_numpy() > 0]
+    poa_coverage = float(poa.loc[coverage_bins].notna().mean()) if len(coverage_bins) else 0.0
     allowed_outliers = int(max_peer_outlier_fraction * int(daylight.sum()))
     scales = power[daylight].quantile(0.95)
     normalized = power.div(scales.where(scales > 0), axis="columns")
@@ -110,7 +126,7 @@ def screen_baseline(
             "empirical_p95_kw": float(scales[device]) if pd.notna(scales[device]) else None,
         }
         item["eligible"] = bool(
-            poa.notna().mean() >= 0.99
+            poa_coverage >= 0.99
             and int(daylight.sum()) >= 16
             and item["coverage"] >= 0.99
             and all(
@@ -130,12 +146,14 @@ def screen_baseline(
         "system_id": system_id,
         "window": [lower.isoformat(), upper.isoformat()],
         "poa_device_id": poa_device_id,
-        "poa_coverage": float(poa.notna().mean()),
+        "poa_coverage": poa_coverage,
         "daylight_bins": int(daylight.sum()),
         "devices": devices,
         "eligible_devices": [d["device_id"] for d in devices if d["eligible"]],
         "status": "screened_not_manually_verified",
-        "screening_version": "m1-v1-large-site" if max_peer_outlier_fraction else "m1-v1",
+        "screening_version": "m1-v1"
+        + ("-large-site" if max_peer_outlier_fraction else "")
+        + ("-daytime-poa" if daytime_site is not None else ""),
         "thresholds": {
             "daylight_wm2": DAYLIGHT_WM2,
             "coverage": 0.99,
@@ -151,6 +169,11 @@ def screen_baseline(
                 "allowed_peer_outlier_bins": allowed_outliers,
             }
             if max_peer_outlier_fraction
+            else {}
+        )
+        | (
+            {"poa_coverage_scope": "sun_above_horizon", "site": list(daytime_site)}
+            if daytime_site is not None
             else {}
         ),
         "limitations": "Heuristic screening may miss persistent faults; no normal ground truth.",

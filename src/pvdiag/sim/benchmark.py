@@ -16,7 +16,12 @@ import pandas as pd
 
 from pvdiag.sim.baseline import aligned_signals, screen_baseline, validate_frame, window_bounds
 from pvdiag.sim.faults import FaultSpec
-from pvdiag.sim.scenarios import Scenario, materialize_scenario, validate_split_isolation
+from pvdiag.sim.scenarios import (
+    Scenario,
+    materialize_scenario,
+    screening_options,
+    validate_split_isolation,
+)
 
 FAULT_TYPES = ("F1", "F2", "F3", "F4", "F5", "F6")
 
@@ -31,6 +36,7 @@ def screened_pool(
     window_days,
     stride_days=7,
     max_peer_outlier_fraction=0.0,
+    daytime_site=None,
 ):
     lower, upper = window_bounds(start, end)
     if not 7 <= window_days <= 90 or stride_days < 1:
@@ -57,6 +63,7 @@ def screened_pool(
             tuple(sorted(device_ids)),
             poa_device_id,
             max_peer_outlier_fraction,
+            daytime_site,
         )
         local_cohorts = []
         # Limit combinatorial expansion while retaining distinct normal candidates.
@@ -69,6 +76,7 @@ def screened_pool(
                 selected,
                 poa_device_id,
                 max_peer_outlier_fraction,
+                daytime_site,
             )
             if set(final["eligible_devices"]) == set(selected):
                 local_cohorts.append((left, right, selected))
@@ -152,13 +160,22 @@ def generate_candidates(
     stride_days=7,
     split="dev",
     max_peer_outlier_fraction=0.0,
+    fault_types=FAULT_TYPES,
+    daytime_site=None,
 ):
     if not 1 <= per_type <= 100 or not 0 <= normal_count <= 200:
         raise ValueError("invalid candidate counts")
-    # Held-out ("test") scenes are not generated here; cross-site scenes never tune anything.
-    prefixes = {"dev": "D", "cross_site": "X"}
+    # Held-out and cross-site scenes are generated but never tune anything; the
+    # benchmark runner still refuses non-dev manifests.
+    prefixes = {"dev": "D", "test": "T", "cross_site": "X"}
     if split not in prefixes:
-        raise ValueError("candidates are generated only for dev or cross_site")
+        raise ValueError("candidates are generated only for dev, test or cross_site")
+    if (
+        not fault_types
+        or len(set(fault_types)) != len(fault_types)
+        or not set(fault_types) <= set(FAULT_TYPES)
+    ):
+        raise ValueError("fault types must be distinct F1–F6 codes")
     pool = screened_pool(
         frame,
         system_id,
@@ -169,11 +186,20 @@ def generate_candidates(
         window_days,
         stride_days,
         max_peer_outlier_fraction,
+        daytime_site,
     )
     if not pool:
         raise ValueError("no screened development cohorts; baseline criteria were not relaxed")
+    screening = {
+        key: value
+        for key, value in (
+            ("max_peer_outlier_fraction", max_peer_outlier_fraction),
+            ("daytime_site", daytime_site),
+        )
+        if value
+    }
     scenarios = []
-    for kind in FAULT_TYPES:
+    for kind in fault_types:
         generated = []
         for left, right, selected in pool:
             number = len(generated) + 1
@@ -194,7 +220,7 @@ def generate_candidates(
                     split=split,
                     difficulty=difficulty,
                 )
-                materialize_scenario(frame, scenario)
+                materialize_scenario(frame, scenario, **screening)
             except ValueError:
                 continue
             generated.append(scenario)
@@ -234,7 +260,15 @@ def main(argv=None):
     parser.add_argument("--normal-count", type=int, default=20)
     parser.add_argument("--window-days", type=int, default=35)
     parser.add_argument("--stride-days", type=int, default=7)
-    parser.add_argument("--split", choices=["dev", "cross_site"], default="dev")
+    parser.add_argument("--split", choices=["dev", "test", "cross_site"], default="dev")
+    parser.add_argument(
+        "--daytime-poa-coverage",
+        nargs=2,
+        type=float,
+        metavar=("LATITUDE", "LONGITUDE"),
+        help="explicit rule: measure POA coverage only while the sun is above the horizon",
+    )
+    parser.add_argument("--fault-types", nargs="+", choices=FAULT_TYPES, default=list(FAULT_TYPES))
     parser.add_argument(
         "--max-peer-outlier-fraction",
         type=float,
@@ -260,13 +294,17 @@ def main(argv=None):
         stride_days=args.stride_days,
         split=args.split,
         max_peer_outlier_fraction=args.max_peer_outlier_fraction,
+        fault_types=tuple(args.fault_types),
+        daytime_site=tuple(args.daytime_poa_coverage) if args.daytime_poa_coverage else None,
     )
     manifest = {
         "schema_version": 2,
         "generator_version": "m2-v1",
-        "purpose": "development_candidates_not_final_benchmark"
-        if args.split == "dev"
-        else "cross_site_candidates_never_used_for_tuning",
+        "purpose": {
+            "dev": "development_candidates_not_final_benchmark",
+            "test": "heldout_candidates_never_used_for_tuning",
+            "cross_site": "cross_site_candidates_never_used_for_tuning",
+        }[args.split],
         "source_sha256": hashlib.sha256(args.source.read_bytes()).hexdigest(),
         "selection_window": list(map(str, window_bounds(args.start, args.end))),
         "development_devices": sorted(args.devices),
@@ -276,8 +314,15 @@ def main(argv=None):
     }
     if args.max_peer_outlier_fraction:
         manifest["max_peer_outlier_fraction"] = args.max_peer_outlier_fraction
+    if args.daytime_poa_coverage:
+        manifest["poa_coverage_scope"] = {
+            "scope": "sun_above_horizon",
+            "site": list(args.daytime_poa_coverage),
+        }
+    if tuple(args.fault_types) != FAULT_TYPES:
+        manifest["fault_types"] = list(args.fault_types)
     for scenario in scenarios:
-        observation, audit = materialize_scenario(frame, scenario)
+        observation, audit = materialize_scenario(frame, scenario, **screening_options(manifest))
         destination = args.dest / scenario.scenario_id
         destination.mkdir(parents=True, exist_ok=True)
         observation.to_parquet(destination / "timeseries.parquet", index=False)

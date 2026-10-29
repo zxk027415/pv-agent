@@ -311,8 +311,13 @@ def test_cross_site_candidates_are_tagged_and_never_mix_with_dev_scenes():
     dev = generate_candidates(*args, per_type=1, normal_count=1)
     with pytest.raises(ValueError, match="cross-site"):
         validate_split_isolation(dev + cross)
-    with pytest.raises(ValueError, match="only for dev or cross_site"):
-        generate_candidates(*args, per_type=1, normal_count=1, split="test")
+    with pytest.raises(ValueError, match="only for dev, test or cross_site"):
+        generate_candidates(*args, per_type=1, normal_count=1, split="train")
+    held = generate_candidates(*args, per_type=1, normal_count=0, split="test", fault_types=("F3", "F4"))
+    assert [s.scenario_id[:6] for s in held] == ["T2107-", "T2107-"]
+    assert {s.split for s in held} == {"test"} and {s.faults[0].type for s in held} == {"F3", "F4"}
+    with pytest.raises(ValueError, match="distinct F1–F6"):
+        generate_candidates(*args, per_type=1, normal_count=0, fault_types=("F3", "F9"))
 
 
 def test_large_site_tolerance_is_explicit_bounded_and_versioned():
@@ -331,3 +336,21 @@ def test_large_site_tolerance_is_explicit_bounded_and_versioned():
     assert "inv01" in tolerant["eligible_devices"]
     with pytest.raises(ValueError, match="between 0 and 5%"):
         screen_baseline(*args, max_peer_outlier_fraction=0.2)
+
+
+def test_daytime_poa_coverage_ignores_night_gaps_only_when_requested():
+    from pvdiag.sim.baseline import screen_baseline
+
+    frame = baseline(days=7)
+    night = (frame.metric == "poa_wm2") & frame.ts.dt.hour.isin([7, 8, 9])
+    frame = frame[~night]
+    args = (frame, 2107, "2019-01-01", "2019-01-08", ("inv01", "inv02", "inv03", "inv04"), "poa")
+    strict = screen_baseline(*args)
+    assert strict["poa_coverage"] < 0.99 and strict["eligible_devices"] == []
+    daytime = screen_baseline(*args, daytime_site=(38.996306, -122.134111))
+    assert daytime["poa_coverage"] == 1.0
+    assert daytime["screening_version"] == "m1-v1-daytime-poa"
+    assert daytime["thresholds"]["poa_coverage_scope"] == "sun_above_horizon"
+    assert set(daytime["eligible_devices"]) == {"inv01", "inv02", "inv03", "inv04"}
+    with pytest.raises(ValueError, match="coordinates"):
+        screen_baseline(*args, daytime_site=(120.0, 0.0))

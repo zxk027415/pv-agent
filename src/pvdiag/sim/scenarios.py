@@ -145,7 +145,21 @@ def scenario_window(frame: pd.DataFrame, scenario: Scenario) -> pd.DataFrame:
     ].copy()
 
 
-def materialize_scenario(frame: pd.DataFrame, scenario: Scenario) -> tuple[pd.DataFrame, dict]:
+def screening_options(manifest: dict) -> dict:
+    """Explicit screening rules recorded in a manifest; empty means strict m1-v1."""
+    options = {}
+    if manifest.get("max_peer_outlier_fraction"):
+        options["max_peer_outlier_fraction"] = manifest["max_peer_outlier_fraction"]
+    if scope := manifest.get("poa_coverage_scope"):
+        if scope.get("scope") != "sun_above_horizon":
+            raise ValueError("unsupported POA coverage scope")
+        options["daytime_site"] = tuple(scope["site"])
+    return options
+
+
+def materialize_scenario(
+    frame: pd.DataFrame, scenario: Scenario, **screening
+) -> tuple[pd.DataFrame, dict]:
     window = scenario_window(frame, scenario)
     report = screen_baseline(
         window,
@@ -153,6 +167,7 @@ def materialize_scenario(frame: pd.DataFrame, scenario: Scenario) -> tuple[pd.Da
         *scenario.query_window,
         scenario.device_ids,
         scenario.poa_device_id,
+        **screening,
     )
     if set(report["eligible_devices"]) != set(scenario.device_ids):
         raise ValueError(f"{scenario.scenario_id}: baseline failed screening")

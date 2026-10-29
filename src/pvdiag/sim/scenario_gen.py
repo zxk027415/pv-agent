@@ -17,7 +17,12 @@ from pvdiag.eval.outcome import case_passed
 from pvdiag.observability.store import digest
 from pvdiag.sim.baseline import aligned_signals
 from pvdiag.sim.benchmark import FAULT_TYPES, make_fault, screened_pool
-from pvdiag.sim.scenarios import Scenario, materialize_scenario, validate_split_isolation
+from pvdiag.sim.scenarios import (
+    Scenario,
+    materialize_scenario,
+    screening_options,
+    validate_split_isolation,
+)
 
 GENERATOR_VERSION = "gen-v1"
 CLOUDY_DAY_RATIO = 0.6
@@ -122,6 +127,7 @@ def generate_from_failures(
         poa_device_id,
         window_days,
         stride_days,
+        **screening_options(manifest),
     )
     if not pool:
         raise ValueError("no screened development cohorts; baseline criteria were not relaxed")
@@ -168,7 +174,7 @@ def generate_from_failures(
                     (fault,),
                     difficulty="hard" if hard else "medium",
                 )
-                materialize_scenario(frame, scenario)
+                materialize_scenario(frame, scenario, **screening_options(manifest))
             except ValueError:
                 continue
             generated.append(scenario)
@@ -208,7 +214,7 @@ def write_pool(frame, scenarios, details, report, parent, source_sha, dest):
         "scenarios": [],
     }
     for scenario in scenarios:
-        observation, audit = materialize_scenario(frame, scenario)
+        observation, audit = materialize_scenario(frame, scenario, **screening_options(parent))
         destination = Path(dest) / scenario.scenario_id
         destination.mkdir(parents=True, exist_ok=False)
         observation.to_parquet(destination / "timeseries.parquet", index=False)

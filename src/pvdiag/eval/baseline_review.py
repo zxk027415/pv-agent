@@ -23,6 +23,7 @@ from pvdiag.sim.scenarios import (
     Scenario,
     materialize_scenario,
     scenario_window,
+    screening_options,
     validate_split_isolation,
 )
 
@@ -69,7 +70,7 @@ def values(series):
     return [float(v) if pd.notna(v) else None for v in series]
 
 
-def packet_for(baseline, scope, source_sha256, metadata_sha256):
+def packet_for(baseline, scope, source_sha256, metadata_sha256, screening=None):
     power, poa = aligned_signals(
         baseline,
         *scope["query_window"],
@@ -99,6 +100,7 @@ def packet_for(baseline, scope, source_sha256, metadata_sha256):
             *scope["query_window"],
             tuple(scope["device_ids"]),
             scope["poa_device_id"],
+            **(screening or {}),
         ),
         "signals": {
             "utc": [t.isoformat() for t in power.index],
@@ -201,11 +203,15 @@ def prepare(manifest, source, metadata, scenario_root, bundle):
             "use a new bundle destination; existing review artifacts are not overwritten"
         )
     scenes = [Scenario.from_dict(s) for s in manifest["scenarios"]]
+    screening = screening_options(manifest)
     validate_split_isolation(scenes)
-    if not scenes or any(scene.split != "dev" for scene in scenes):
-        raise ValueError(
-            "baseline review preparation currently accepts development candidates only"
-        )
+    # Reviewers see only pre-injection baselines; held-out normals need the same review.
+    # One split per bundle, and released held-out manifests stay refused by run_bench.
+    if not scenes or len({scene.split for scene in scenes}) != 1 or scenes[0].split not in {
+        "dev",
+        "test",
+    }:
+        raise ValueError("a review bundle holds candidates from exactly one dev or test split")
     source_bytes, metadata_bytes = source.read_bytes(), metadata.read_bytes()
     source_sha, metadata_sha = digest(source_bytes), digest(metadata_bytes)
     if source_sha != manifest.get("source_sha256"):
@@ -224,14 +230,14 @@ def prepare(manifest, source, metadata, scenario_root, bundle):
         scope_key = digest(canonical(scope))
         if scope_key not in by_scope:
             baseline = scenario_window(frame, scene)
-            packet, raw = packet_for(baseline, scope, source_sha, metadata_sha)
+            packet, raw = packet_for(baseline, scope, source_sha, metadata_sha, screening)
             if set(packet["screening"]["eligible_devices"]) != set(scene.device_ids):
                 raise ValueError("original baseline no longer passes the frozen screening criteria")
             review_id = digest(canonical(packet))
             by_scope[scope_key] = (review_id, baseline)
             packets[review_id] = (packet, raw)
         review_id, baseline = by_scope[scope_key]
-        expected, _ = materialize_scenario(baseline, scene)
+        expected, _ = materialize_scenario(baseline, scene, **screening)
         path = local_file(scenario_root, f"{scene.scenario_id}/timeseries.parquet")
         content = path.read_bytes()
         actual = pd.read_parquet(io.BytesIO(content))
