@@ -10,7 +10,8 @@
 |---|---|
 | 规则基线 B0（不用大模型） | M1 十个冒烟场景：根因与设备 10/10，时间窗 IoU≥0.5 为 9/10；M2 六类各 10 个故障候选：根因+设备联合命中 33/60 |
 | DeepSeek（单场景试跑） | 第三次运行给出了根因、设备、时间窗都正确的结论，但因一条数值引用路径越界被守卫降级为需人工复核；尚无通过守卫的 LLM 诊断，没有 A0–A5 成绩 |
-| 正常场景 / 留出集 | 20 份原始基线待人工审核，尚无正式正常误报率与留出集结果 |
+| 双故障（B0） | 开发集 20 个 hard 双故障场景：17 个判出有故障，但两个根因与设备都答对的只有 F4+F6 的 3/5 |
+| 正常场景 / 留出集 / 跨站 | 2107 留出候选 70 个、9069 跨站候选 40 个已生成并通过预检；开发集与留出集各 20 份原始基线待人工审核；尚无正式误报率、留出或跨站成绩 |
 
 这些数字来自开发数据，不代表泛化能力。
 
@@ -99,6 +100,12 @@ uv run --group dev pytest -q
 | 自进化 / A5 | 核心依赖 | `python -m pvdiag.evolve --proposer-file ...` 或 `--proposer-model ... --allow-proposer-calls` |
 | 失败驱动场景生成 | 核心依赖 | `python -m pvdiag.sim.scenario_gen --manifest ... --summary ...` |
 | Ragas | `requirements/ragas.in`（单独的 `.venv-eval`） | `python -m pvdiag.eval.ragas prepare/run` |
+
+### 评测范围、留出集与跨站集
+
+- `run_bench` 默认只跑开发集。`--scope heldout|cross_site --preflight-only` 只校验并冻结观测快照，不诊断、不消耗评测次数。
+- 留出 / 跨站的正式评测需要 `--allow-final-evaluation --stage <阶段名>`，并写入一次性台账（默认 `data/eval/final_ledger.json`）；同一清单的同一阶段只能评测一次，失败也算用过。
+- 生成器 `python -m pvdiag.sim.benchmark` 支持 `--split dev|test|cross_site`、`--fault-types` 子集、`--compound FA,FB --per-compound N`（hard 双故障）；两条带版本号的放宽筛查规则只在显式指定时生效：`--max-peer-outlier-fraction`（大电站同站离群容忍）与 `--daytime-poa-coverage 纬度 经度`（POA 覆盖率只统计日间）。清单会记录所用规则，审核与重建时自动沿用。
 
 所有可能计费的调用都要显式开关（`--allow-model-calls`、`--allow-proposer-calls`、Ragas 的 `--allow-generation/--allow-judge`），并有调用次数上限；没有开关时会在发出任何请求之前拒绝。
 
