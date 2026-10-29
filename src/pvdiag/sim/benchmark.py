@@ -162,8 +162,11 @@ def generate_candidates(
     max_peer_outlier_fraction=0.0,
     fault_types=FAULT_TYPES,
     daytime_site=None,
+    compounds=(),
+    per_compound=0,
 ):
-    if not 1 <= per_type <= 100 or not 0 <= normal_count <= 200:
+    # Single-fault scenes may be omitted only in an explicit compound-only pool.
+    if not (0 if compounds else 1) <= per_type <= 100 or not 0 <= normal_count <= 200:
         raise ValueError("invalid candidate counts")
     # Held-out and cross-site scenes are generated but never tune anything; the
     # benchmark runner still refuses non-dev manifests.
@@ -176,6 +179,11 @@ def generate_candidates(
         or not set(fault_types) <= set(FAULT_TYPES)
     ):
         raise ValueError("fault types must be distinct F1–F6 codes")
+    if bool(compounds) != bool(per_compound) or not 0 <= per_compound <= 50:
+        raise ValueError("compound scenes need both pairs and a per-pair count of 1–50")
+    for pair in compounds:
+        if len(pair) != 2 or pair[0] == pair[1] or not set(pair) <= set(FAULT_TYPES):
+            raise ValueError("compound pairs are two distinct F1–F6 codes")
     pool = screened_pool(
         frame,
         system_id,
@@ -199,7 +207,7 @@ def generate_candidates(
         if value
     }
     scenarios = []
-    for kind in fault_types:
+    for kind in fault_types if per_type else ():
         generated = []
         for left, right, selected in pool:
             number = len(generated) + 1
@@ -228,6 +236,59 @@ def generate_candidates(
                 break
         if len(generated) != per_type:
             raise ValueError(f"only {len(generated)}/{per_type} observable {kind} scenarios")
+        scenarios.extend(generated)
+    for first, second in compounds:
+        generated = []
+        for left, right, selected in pool:
+            number = len(generated) + 1
+            # The second fault targets another device of the cohort (F5 targets the POA).
+            rotated = (*selected[1:], selected[0])
+            try:
+                faults = (
+                    make_fault(
+                        first,
+                        left,
+                        right,
+                        selected,
+                        poa_device_id,
+                        timezone,
+                        number,
+                        per_compound,
+                        frame,
+                    ),
+                    make_fault(
+                        second,
+                        left,
+                        right,
+                        rotated,
+                        poa_device_id,
+                        timezone,
+                        number,
+                        per_compound,
+                        frame,
+                    ),
+                )
+                scenario = Scenario(
+                    f"{prefixes[split]}{system_id}-{first}{second}-{number:04d}",
+                    system_id,
+                    (left.isoformat(), right.isoformat()),
+                    selected,
+                    poa_device_id,
+                    faults,
+                    split=split,
+                    difficulty="hard",
+                )
+                # Rejects masked or unobservable components as well as screening failures.
+                materialize_scenario(frame, scenario, **screening)
+            except ValueError:
+                continue
+            generated.append(scenario)
+            if len(generated) == per_compound:
+                break
+        if len(generated) != per_compound:
+            raise ValueError(
+                f"only {len(generated)}/{per_compound} observable {first}+{second} scenarios"
+            )
         scenarios.extend(generated)
     if len(pool) < normal_count:
         raise ValueError(f"only {len(pool)}/{normal_count} distinct unmodified baseline candidates")
@@ -268,6 +329,14 @@ def main(argv=None):
         metavar=("LATITUDE", "LONGITUDE"),
         help="explicit rule: measure POA coverage only while the sun is above the horizon",
     )
+    parser.add_argument(
+        "--compound",
+        action="append",
+        default=[],
+        metavar="FA,FB",
+        help="explicit hard two-fault pair, repeatable (e.g. F3,F5)",
+    )
+    parser.add_argument("--per-compound", type=int, default=0)
     parser.add_argument("--fault-types", nargs="+", choices=FAULT_TYPES, default=list(FAULT_TYPES))
     parser.add_argument(
         "--max-peer-outlier-fraction",
@@ -296,6 +365,8 @@ def main(argv=None):
         max_peer_outlier_fraction=args.max_peer_outlier_fraction,
         fault_types=tuple(args.fault_types),
         daytime_site=tuple(args.daytime_poa_coverage) if args.daytime_poa_coverage else None,
+        compounds=tuple(tuple(pair.split(",")) for pair in args.compound),
+        per_compound=args.per_compound,
     )
     manifest = {
         "schema_version": 2,
@@ -319,6 +390,8 @@ def main(argv=None):
             "scope": "sun_above_horizon",
             "site": list(args.daytime_poa_coverage),
         }
+    if args.compound:
+        manifest["compounds"] = {"pairs": args.compound, "per_pair": args.per_compound}
     if tuple(args.fault_types) != FAULT_TYPES:
         manifest["fault_types"] = list(args.fault_types)
     for scenario in scenarios:

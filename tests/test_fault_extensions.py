@@ -354,3 +354,24 @@ def test_daytime_poa_coverage_ignores_night_gaps_only_when_requested():
     assert set(daytime["eligible_devices"]) == {"inv01", "inv02", "inv03", "inv04"}
     with pytest.raises(ValueError, match="coordinates"):
         screen_baseline(*args, daytime_site=(120.0, 0.0))
+
+
+def test_explicit_compound_candidates_are_hard_observable_and_on_distinct_targets():
+    frame = baseline(days=49)
+    args = (frame, 2107, "2019-01-01", "2019-02-19", ("inv01", "inv02", "inv03", "inv04"), "poa", "PST8PDT")
+    options = {"per_type": 1, "normal_count": 0, "compounds": (("F3", "F5"), ("F2", "F4")), "per_compound": 1}
+    scenes = generate_candidates(*args, **options)
+    assert scenes == generate_candidates(*args, **options)
+    compound = [s for s in scenes if len(s.faults) == 2]
+    assert [s.scenario_id for s in compound] == ["D2107-F3F5-0001", "D2107-F2F4-0001"]
+    for scene in compound:
+        assert scene.difficulty == "hard"
+        assert scene.faults[0].device_id != scene.faults[1].device_id
+        _, audit = materialize_scenario(frame, scene)
+        assert len(audit["injections"]) == 2 and all(a["changed_rows"] > 0 for a in audit["injections"])
+    assert len(generate_candidates(*args, per_type=1, normal_count=0)) == 6
+    for bad in ((("F3", "F3"),), (("F3", "F9"),)):
+        with pytest.raises(ValueError, match="distinct F1–F6"):
+            generate_candidates(*args, per_type=1, normal_count=0, compounds=bad, per_compound=1)
+    with pytest.raises(ValueError, match="per-pair count"):
+        generate_candidates(*args, per_type=1, normal_count=0, compounds=(("F3", "F5"),))
