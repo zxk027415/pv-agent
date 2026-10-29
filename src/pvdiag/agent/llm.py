@@ -12,6 +12,32 @@ from pvdiag.agent.state import DiagnosisReport, ModelReview, Plan
 from pvdiag.observability.tracing import mark_request_sent, observe
 
 
+class StructuredOutputError(ValueError):
+    """Model output failed its schema; ``details`` holds field locations, never values."""
+
+    def __init__(self, details):
+        super().__init__("invalid structured model output")
+        self.details = details
+
+
+def output_errors(error):
+    """Field location, error type and a short message from a parse failure; no output text."""
+    errors = getattr(error, "errors", None)
+    if callable(errors):
+        try:
+            return [
+                {
+                    "loc": ".".join(str(part) for part in item.get("loc", ())) or "(root)",
+                    "type": str(item.get("type", "")),
+                    "msg": str(item.get("msg", ""))[:160],
+                }
+                for item in errors(include_input=False, include_url=False)[:10]
+            ]
+        except TypeError:
+            pass
+    return [{"loc": "(unknown)", "type": type(error).__name__, "msg": ""}]
+
+
 class LLMReasoner:
     def __init__(
         self,
@@ -146,7 +172,13 @@ class LLMReasoner:
             }
         )
         if response["parsing_error"] or response["parsed"] is None:
-            raise ValueError("invalid structured model output")
+            details = (
+                output_errors(response["parsing_error"])
+                if response["parsing_error"]
+                else [{"loc": "(root)", "type": "missing", "msg": "no structured output"}]
+            )
+            observation.update(metadata={"output_validation_errors": details})
+            raise StructuredOutputError(details)
         observation.update(output=response["parsed"])
         return response["parsed"]
 

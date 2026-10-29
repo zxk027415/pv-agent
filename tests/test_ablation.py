@@ -424,3 +424,47 @@ def test_report_author_sees_verification_feedback_except_in_feedback_free_ablati
     )
     hypotheses = [a for a in attempts if a["task"] == "hypothesize"]
     assert all(h["verification_issues"] == [] and h["critique"] == [] for h in hypotheses)
+
+
+def test_schema_failures_are_reported_by_field_to_the_next_plan_and_hypothesis(
+    observation, monkeypatch
+):
+    import pvdiag.agent.llm as module
+
+    try:
+        DiagnosisReport.model_validate({"status": "fault", "summary": "SECRET_OUTPUT_TEXT"})
+    except ValueError as error:
+        invalid = error
+    attempts = []
+
+    class SDK:
+        def with_structured_output(self, schema, **kwargs):
+            self.schema = schema
+            return self
+
+        async def ainvoke(self, messages):
+            payload = json.loads(messages[1][1])
+            attempts.append(payload)
+            first_hypothesis = self.schema is DiagnosisReport and sum(a["task"] == "hypothesize" for a in attempts) == 1
+            parsed = (
+                None
+                if first_hypothesis
+                else Plan(calls=[])
+                if self.schema is Plan
+                else DiagnosisReport(status="inconclusive", summary="现有观测不足以区分故障原因。")
+            )
+            return {
+                "raw": AIMessage(content="", usage_metadata={"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}),
+                "parsed": parsed,
+                "parsing_error": invalid if first_hypothesis else None,
+            }
+
+    monkeypatch.setattr(module, "init_chat_model", lambda *a, **k: SDK())
+    asyncio.run(run_diagnosis(ObservationStore(*observation), request(), LLMReasoner("offline")))
+    plans = [a for a in attempts if a["task"] == "plan"]
+    hypotheses = [a for a in attempts if a["task"] == "hypothesize"]
+    hints = [c for c in plans[1]["critique"] if c.startswith("上一轮报告未通过结构化 schema 校验")]
+    assert hints and any("findings" in h or "evidence_ids" in h for h in hints)
+    carried = [i for i in hypotheses[1]["verification_issues"] if i["code"] == "invalid_structured_output"]
+    assert carried and carried[0]["message"].startswith("上一轮报告未通过结构化 schema 校验")
+    assert "SECRET_OUTPUT_TEXT" not in json.dumps(attempts[2:], ensure_ascii=False)

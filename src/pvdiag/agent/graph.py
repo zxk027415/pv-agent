@@ -36,6 +36,7 @@ from pvdiag.observability.tracing import current_session
 
 DEFAULT_PROMPT = Path(__file__).resolve().parents[3] / "harness" / "system_prompt.md"
 DEFAULT_REVIEW_PROMPT = DEFAULT_PROMPT.with_name("verification_prompt.md")
+SCHEMA_HINT = "上一轮报告未通过结构化 schema 校验："
 # Repair hints returned to the planner/hypothesis model; they never relax the checks.
 STRUCTURAL_GUIDANCE = {
     "uncited_number_in_summary": "summary 中出现了范围内设备编号以外的数字字符（如日期、时刻、数值），改为定性文字，数值放入 numbers。",
@@ -236,8 +237,16 @@ def build_graph(
                     report.model_dump() if isinstance(report, DiagnosisReport) else report
                 )
             }
-        except (ValueError, TypeError, RuntimeError):
-            return {"verdict": degrade(state["evidence"]), "critique": ["hypothesis_failed"]}
+        except (ValueError, TypeError, RuntimeError) as error:
+            # Field-level schema failures become repair hints (locations only, no values).
+            hints = [
+                f"{SCHEMA_HINT}{d['loc']}（{d['type']}）{d['msg']}"
+                for d in getattr(error, "details", [])
+            ]
+            return {
+                "verdict": degrade(state["evidence"]),
+                "critique": ["hypothesis_failed", *hints],
+            }
 
     async def verify(state):
         structural = check_report(
@@ -256,6 +265,12 @@ def build_graph(
                 evidence_ids=[d["evidence_id"]],
             )
             for d in detailed[:12]
+        ] + [
+            # Carry schema-failure hints into the record: planning clears critique, and the
+            # next hypothesis call reads the previous record's issues.
+            VerificationIssue(code="invalid_structured_output", message=hint[:600])
+            for hint in state.get("critique", [])
+            if hint.startswith(SCHEMA_HINT)
         ]
         # Invalid citations must be repaired before domain logic dereferences them.
         if not structural and verification_mode != "structural":
