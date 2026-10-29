@@ -106,7 +106,9 @@ class MCPGateway:
                     catalog[tool.name] = {
                         "name": tool.name,
                         "description": tool.description,
-                        "input_schema": tool.input_schema,
+                        # FastMCP wraps inputs as {"request": ...}; planners must emit the
+                        # inner fields that call() validates, so expose exactly that schema.
+                        "input_schema": CONTRACTS[tool.name][0].model_json_schema(),
                     }
             if set(clients) != required:
                 raise ValueError("MCP servers do not expose the required tools")

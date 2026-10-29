@@ -335,3 +335,36 @@ def test_real_langchain_openai_adapter_accepts_structured_schemas_without_networ
         )
         assert callable(runnable.ainvoke)
     assert adapter.usage["model_calls"] == 0
+
+
+def test_planner_tool_schemas_are_the_inner_request_contracts_the_gateway_validates(observation):
+    # The first real DeepSeek run planned against FastMCP's {"request": ...} wrapper and
+    # every investigate call failed validation; planners must see the inner schema.
+    from pvdiag.agent.gateway import CONTRACTS
+
+    async def verify():
+        store = ObservationStore(*observation)
+        async with MCPGateway.connect(data_server(store), analytics_server(store)) as gateway:
+            for name, tool in gateway.tools.items():
+                assert tool["input_schema"] == CONTRACTS[name][0].model_json_schema()
+                assert "request" not in tool["input_schema"].get("properties", {})
+            scope = Scope(
+                source_sha256=store.source_sha256,
+                device_ids=request().device_ids,
+                poa_device_id="poa",
+                ambient_device_id="ambient",
+            )
+            inner = request().model_dump(mode="json", exclude={"question"})
+            ok = await gateway.call(
+                ToolCall(name="data_quality", arguments=inner), request(), scope, "investigate"
+            )
+            wrapped = await gateway.call(
+                ToolCall(name="data_quality", arguments={"request": inner}),
+                request(),
+                scope,
+                "investigate",
+            )
+            return ok[1], wrapped[1]
+
+    ok, wrapped = asyncio.run(verify())
+    assert ok.success and not wrapped.success and wrapped.error == "ValidationError"
