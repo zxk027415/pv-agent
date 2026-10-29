@@ -38,9 +38,9 @@ DEFAULT_PROMPT = Path(__file__).resolve().parents[3] / "harness" / "system_promp
 DEFAULT_REVIEW_PROMPT = DEFAULT_PROMPT.with_name("verification_prompt.md")
 # Repair hints returned to the planner/hypothesis model; they never relax the checks.
 STRUCTURAL_GUIDANCE = {
-    "uncited_number_in_summary": "summary 中出现了数字字符（包括设备编号或日期），改为定性文字，数值放入 numbers。",
-    "uncited_number_in_rationale": "rationale 中出现了数字字符（包括设备编号或日期），设备写在 device_id、时间写在 window。",
-    "invalid_numeric_citation": "numbers 中有条目的路径或数值与证据不符，或 label 含数字字符（包括设备编号）；逐字引用证据数值并改用定性标签。",
+    "uncited_number_in_summary": "summary 中出现了范围内设备编号以外的数字字符（如日期、时刻、数值），改为定性文字，数值放入 numbers。",
+    "uncited_number_in_rationale": "rationale 中出现了范围内设备编号以外的数字字符（如日期、时刻、数值），时间写在 window，数值放入 numbers。",
+    "invalid_numeric_citation": "numbers 中有条目的路径或数值与证据不符，或 label 含范围内设备编号以外的数字字符；逐字引用证据数值并改用定性标签。",
     "invalid_time_citation": "window 的起止时间必须逐字引用证据中已有时间戳的路径。",
     "unknown_report_evidence": "报告引用了本次不存在的 evidence_id。",
     "unknown_finding_evidence": "结论引用了本次不存在的 evidence_id。",

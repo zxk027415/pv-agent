@@ -410,3 +410,27 @@ def test_every_structural_guard_code_has_specific_repair_guidance():
     codes = set(re.findall(r'issues\.append\("([a-z_]+)"\)', Path(guards.__file__).read_text()))
     assert codes and codes == set(STRUCTURAL_GUIDANCE)
     assert all("结构化输出或引用校验失败" not in text for text in STRUCTURAL_GUIDANCE.values())
+
+
+def test_only_exact_in_scope_identifiers_are_exempt_from_the_digit_guard():
+    from pvdiag.agent.guards import has_uncited_digits
+    from pvdiag.agent.state import Scope
+
+    scope = Scope(
+        source_sha256="0" * 64,
+        device_ids=["inv03", "inv04", "inv05"],
+        poa_device_id="sensor_149574",
+        ambient_device_id=None,
+    )
+    for allowed in ("inv03在午后持续零功率", "inv03 与 inv04、inv05 对比", "sensor_149574 读数完整", "无数字"):
+        assert not has_uncited_digits(allowed, scope), allowed
+    for blocked in (
+        "inv03 在 1 月 12 日停机",
+        "inv99 异常",
+        "inv035 异常",
+        "持续约 3 小时",
+        "判定为 F3",
+        "比值为 0.44",
+        "19:30 起",
+    ):
+        assert has_uncited_digits(blocked, scope), blocked

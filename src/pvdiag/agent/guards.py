@@ -28,6 +28,18 @@ def resolve(document: dict, path: str):
     return current
 
 
+def has_uncited_digits(text: str, scope: Scope) -> bool:
+    """Digits outside the exact in-scope device/sensor identifiers; dates stay forbidden."""
+    identifiers = [
+        value
+        for value in (*scope.device_ids, scope.poa_device_id, scope.ambient_device_id)
+        if value
+    ]
+    for identifier in sorted(identifiers, key=len, reverse=True):
+        text = re.sub(rf"(?<![A-Za-z0-9_]){re.escape(identifier)}(?![A-Za-z0-9_])", "", text)
+    return bool(re.search(r"\d", text))
+
+
 def check_report(
     report: DiagnosisReport, evidence: dict, request: DiagRequest, scope: Scope
 ) -> list[str]:
@@ -35,7 +47,7 @@ def check_report(
     referenced = set(report.evidence_ids)
     if referenced - evidence.keys():
         issues.append("unknown_report_evidence")
-    if re.search(r"\d", report.summary):
+    if has_uncited_digits(report.summary, scope):
         issues.append("uncited_number_in_summary")
     if report.status == "normal":
         measurements = {evidence[key]["tool"] for key in referenced if key in evidence}
@@ -55,7 +67,7 @@ def check_report(
             issues.append("finding_device_outside_scope")
         if finding.window.start.value < request.start or finding.window.end.value > request.end:
             issues.append("finding_window_outside_scope")
-        if re.search(r"\d", finding.rationale):
+        if has_uncited_digits(finding.rationale, scope):
             issues.append("uncited_number_in_rationale")
         for claim in finding.numbers:
             try:
@@ -69,7 +81,7 @@ def check_report(
                     raise ValueError("not a cited numeric measurement")
                 if not math.isclose(actual, claim.value, rel_tol=1e-9, abs_tol=1e-9):
                     raise ValueError("value mismatch")
-                if re.search(r"\d", claim.label):
+                if has_uncited_digits(claim.label, scope):
                     raise ValueError("uncited number in label")
             except (KeyError, IndexError, TypeError, ValueError):
                 issues.append("invalid_numeric_citation")
