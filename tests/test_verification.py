@@ -398,3 +398,15 @@ def test_endpoint_credentials_are_not_implicitly_forwarded_to_another_provider(
     assert configured[-1]["api_key"] == "deepseek-fixture-only"
     with pytest.raises(ValueError, match="explicit API key"):
         LLMReasoner("offline", base_url="https://api.deepseek.com")
+
+
+def test_every_structural_guard_code_has_specific_repair_guidance():
+    import re
+    from pathlib import Path
+
+    from pvdiag.agent import guards
+    from pvdiag.agent.graph import STRUCTURAL_GUIDANCE
+
+    codes = set(re.findall(r'issues\.append\("([a-z_]+)"\)', Path(guards.__file__).read_text()))
+    assert codes and codes == set(STRUCTURAL_GUIDANCE)
+    assert all("结构化输出或引用校验失败" not in text for text in STRUCTURAL_GUIDANCE.values())

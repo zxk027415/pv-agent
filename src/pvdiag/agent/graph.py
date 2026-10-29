@@ -36,6 +36,20 @@ from pvdiag.observability.tracing import current_session
 
 DEFAULT_PROMPT = Path(__file__).resolve().parents[3] / "harness" / "system_prompt.md"
 DEFAULT_REVIEW_PROMPT = DEFAULT_PROMPT.with_name("verification_prompt.md")
+# Repair hints returned to the planner/hypothesis model; they never relax the checks.
+STRUCTURAL_GUIDANCE = {
+    "uncited_number_in_summary": "summary 中出现了数字字符（包括设备编号或日期），改为定性文字，数值放入 numbers。",
+    "uncited_number_in_rationale": "rationale 中出现了数字字符（包括设备编号或日期），设备写在 device_id、时间写在 window。",
+    "invalid_numeric_citation": "numbers 中有条目的路径或数值与证据不符，或 label 含数字字符（包括设备编号）；逐字引用证据数值并改用定性标签。",
+    "invalid_time_citation": "window 的起止时间必须逐字引用证据中已有时间戳的路径。",
+    "unknown_report_evidence": "报告引用了本次不存在的 evidence_id。",
+    "unknown_finding_evidence": "结论引用了本次不存在的 evidence_id。",
+    "finding_missing_from_report_citations": "结论引用的证据必须同时列入报告 evidence_ids。",
+    "insufficient_distinct_tools": "每条结论至少引用两个不同观测工具的证据。",
+    "finding_device_outside_scope": "结论设备必须在本次请求的设备范围内。",
+    "finding_window_outside_scope": "结论时间窗必须落在本次请求的时间范围内。",
+    "normal_verdict_requires_measurements": "正常结论需要质量、同站对比和异常排查等观测证据支持。",
+}
 
 
 def build_graph(
@@ -230,7 +244,7 @@ def build_graph(
             state["verdict"], state["evidence"], state["request"], state["scope"]
         )
         issues = [
-            VerificationIssue(code=code, message="结构化输出或引用校验失败。")
+            VerificationIssue(code=code, message=STRUCTURAL_GUIDANCE.get(code, "结构化输出或引用校验失败。"))
             for code in structural
         ]
         # Invalid citations must be repaired before domain logic dereferences them.
