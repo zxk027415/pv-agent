@@ -196,6 +196,23 @@ class LLMReasoner:
                 ]
                 if state.get("verification")
                 else [],
+                # The planner must know when a previous verdict already passed
+                # verification; an empty issue list alone does not say so.
+                # No-feedback ablation states arrive without a verdict key, so
+                # both fields stay None there.
+                "previous_verdict": (
+                    state["verdict"].model_dump(mode="json")
+                    if state.get("verification") and state.get("verdict")
+                    else None
+                ),
+                "previous_verification": (
+                    {
+                        "passed": state["verification"][-1].passed,
+                        "report_status": state["verification"][-1].report_status,
+                    }
+                    if state.get("verification")
+                    else None
+                ),
                 "tool_failures": [
                     {"name": t.name, "error": t.error} for t in state["trace"] if not t.success
                 ],
