@@ -1229,3 +1229,23 @@ HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 .venv/bin/python -m pvdiag.eval.ragas pr
 新增测试：离线 SDK 首次假设调用返回真实的 pydantic 校验错误后，下一轮规划的 critique 与下一轮假设的核验问题中都带有字段位置，输出原文不出现在之后的任何模型输入中。全套 **338 项通过、18 项跳过**；M1 B0 回归不变（联合 10/10、时间窗 9/10、91 次工具调用）。
 
 **仍未验证**：修复后真实模型能否在三轮内产出通过守卫的报告，需要新的调用授权。从四次运行看，模型的定位能力已经稳定（第三、四次都给出完全正确的根因、设备和时间窗），瓶颈在输出格式和引用的精确性上。
+
+### 第五至第九次 DeepSeek 运行与首次通过（2026-10-30 晚）
+
+用户授权由助手接续开发（经远程在本人机器执行），仍沿用同一场景、最多 6 次调用、`--trace-db`、工单关闭的口径。各次运行文件均未入库、未上传。
+
+**第五次（作废）**（`data/runs/deepseek_pilot_rerun4.json`）：助手误用清洗后原始数据 `data/clean/2107.parquet` 作为观测（证据源哈希 48b1f225…，与历次场景数据的 8bfea5d5… 不符），其中并无注入故障。模型三轮均判 normal、核验均通过，但规划器始终未标记 ready，以 needs_review 结束。该运行不构成对守卫修复的验证，消耗单列；附带观察：干净数据上模型未臆造故障；「结论已定但规划不收口」在 normal 路径上同样存在。
+
+**第六次**（`data/runs/deepseek_pilot_rerun5.json`，场景数据、哈希已核对一致）：26.3 秒，6 次调用，输入 104,213 / 输出 3,962 token，返回模型名 deepseek-flash。第 2、3 轮假设均为 **F3、inv03、2019-01-12 19:30–22:30Z**，与真值一致；但第 2 轮 rationale 出现未引用数字，第 3 轮 numbers[5..7] 引用的证据未列入该 finding 的 evidence_ids，核验未通过，轮次耗尽后降级 needs_review。
+
+**修复一**（提示词记账澄清）：`harness/system_prompt.md` 报告段补明——numbers 引用的每个 evidence_id 必须同时列入该 finding 自己的 evidence_ids，只列入报告级 evidence_ids 不够。全套 338 项通过、18 项跳过。
+
+**第七次**（`data/runs/deepseek_pilot_rerun6.json`）：24.2 秒，输入 94,019 / 输出 4,120 token。第 2、3 轮假设均为 F3、inv03、同一时间窗，**核验全部通过、零问题**；但三次规划的 ready_for_verdict 均为 false，图在轮次耗尽后仍降级 needs_review。根因：`llm.py` 的 plan 调用只收到 verification_issues（核验通过时为空列表），看不到上一轮结论及「已通过核验」这一事实，规划器无从决定收口。
+
+**修复二**（规划可见性）：`llm.py` 的 plan 输入新增 previous_verdict 与 previous_verification（passed、report_status），仅在已有核验记录时提供；无反馈消融档位的 model_state 本就剥离 verdict 键，这两字段在其输入中自动为 None，不污染 A0–A2。`harness/system_prompt.md` 规划段补明：上一轮核验 passed 且结论为 fault 或 normal 时，应设 ready_for_verdict=true 且 calls 留空。全套 338 项通过、18 项跳过。
+
+**第八次**（`data/runs/deepseek_pilot_rerun7.json`）：19.4 秒，输入 115,752 / 输出 2,979 token。前两轮 inconclusive，第 3 轮才给出 fault 且 numbers[3] 数值与证据不符（辐照峰值误引），核验未通过而轮次耗尽。单场景方差仍大：结论到达的轮次与引用精确性都在抖动。
+
+**第九次（首次通过）**（`data/runs/deepseek_pilot_rerun8.json`）：19.9 秒，3 轮，6 次调用，输入 87,378 / 输出 3,373 token，返回模型名 deepseek-flash。第 1 轮 inconclusive；第 2 轮 fault（F3、inv03、19:30–22:30Z）且核验通过；第 3 轮规划器依据 previous_verification 主动收口（ready=true、calls=0），最终报告 **status=fault**：finding 为 F3 / inv03 / 2019-01-12 19:30–22:30Z、置信度 high、6 条数值引用全部有效、未审批写入 0。**这是本项目首个通过全部守卫与核验的 LLM 端到端诊断结果**（开发集 M1 冒烟场景、单场景）。
+
+**口径与下一步**：单场景通过只证明链路可达，不代表稳定性；历次有效运行的失败形态各不相同（格式、记账、收口、误引、轮次抖动）。下一步应为 M1 十场景 LLM 评测以测稳定性，仍需新的调用授权；留出/跨站正式评测与 A0–A5 消融维持原有门槛不变。
