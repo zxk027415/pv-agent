@@ -188,6 +188,17 @@ def build_graph(
             "loops": 1 if policy.level == "A0" else 0,
         }
 
+    def closing(state):
+        # The last loop's verdict has no later planning call that could mark it ready, so a
+        # fault/normal verdict that passes verification there is accepted without one.
+        exhausted = state["loops"] >= max_loops or len(state["trace"]) >= max_calls
+        return state["plan"].ready_for_verdict or (
+            exhausted and state["verdict"].status in {"fault", "normal"}
+        )
+
+    def accepted(state):
+        return not state["critique"] and closing(state)
+
     def model_state(state):
         if policy and not policy.feedback:
             # No output-check findings, prior verdicts or reviewer guidance can
@@ -278,7 +289,7 @@ def build_graph(
                 check_domain(state["verdict"], state["evidence"], state["request"], state["scope"])
             )
         reviewed = False
-        ready = state["plan"].ready_for_verdict and state["verdict"].status in {"fault", "normal"}
+        ready = closing(state) and state["verdict"].status in {"fault", "normal"}
         if verification_mode == "domain_llm" and not structural and ready:
             try:
                 review = await reasoner.review(state, issues, review_prompt)
@@ -328,7 +339,7 @@ def build_graph(
         )
 
     def action_draft(state):
-        if state["critique"] or not state["plan"].ready_for_verdict:
+        if not accepted(state):
             raise ValueError("diagnosis not ready for an action")
         verdict = state["verdict"]
         if (
@@ -405,11 +416,7 @@ def build_graph(
         }
 
     def report(state):
-        verdict = (
-            degrade(state["evidence"])
-            if state["critique"] or not state["plan"].ready_for_verdict
-            else state["verdict"]
-        )
+        verdict = state["verdict"] if accepted(state) else degrade(state["evidence"])
         return {"verdict": verdict}
 
     async def guard_out(state):

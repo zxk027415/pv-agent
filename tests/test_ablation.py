@@ -468,3 +468,77 @@ def test_schema_failures_are_reported_by_field_to_the_next_plan_and_hypothesis(
     carried = [i for i in hypotheses[1]["verification_issues"] if i["code"] == "invalid_structured_output"]
     assert carried and carried[0]["message"].startswith("上一轮报告未通过结构化 schema 校验")
     assert "SECRET_OUTPUT_TEXT" not in json.dumps(attempts[2:], ensure_ascii=False)
+
+
+def never_ready(reviews):
+    inner = request().model_dump(mode="json", exclude={"question"})
+    calls = [
+        ToolCall(name="data_quality", arguments=inner),
+        ToolCall(
+            name="peer_compare",
+            arguments=inner
+            | {
+                "poa_device_id": "poa",
+                "reference_start": "2019-01-01T00:00:00Z",
+                "reference_end": "2019-01-03T00:00:00Z",
+            },
+        ),
+    ]
+
+    def handler(payload, schema):
+        if schema is Plan:
+            # Investigate once, then keep asking for nothing without ever marking ready.
+            return Plan(
+                calls=calls if payload["previous_verification"] is None else [],
+                ready_for_verdict=False,
+            )
+        if schema is ModelReview:
+            reviews.append(payload)
+            return ModelReview(passed=True)
+        measured = [
+            k
+            for k, ev in payload["evidence"].items()
+            if ev["tool"] in {"data_quality", "peer_compare"}
+        ]
+        return DiagnosisReport(
+            status="normal", summary="未见设备异常。", evidence_ids=sorted(measured)
+        )
+
+    return handler
+
+
+def test_verified_verdict_in_the_last_loop_is_accepted_without_a_later_plan(
+    observation, monkeypatch
+):
+    offline_model(monkeypatch, never_ready([]))
+    result = asyncio.run(
+        run_diagnosis(
+            ObservationStore(*observation),
+            request(),
+            LLMReasoner("offline"),
+            verification_mode="structural",
+        )
+    )
+    assert result.loops == 3 and [r.passed for r in result.verification] == [True] * 3
+    assert not any(r.ready_for_verdict for r in result.verification)
+    assert result.report.status == "normal"
+
+
+def test_last_loop_acceptance_still_runs_the_model_review(observation, monkeypatch):
+    reviews = []
+    offline_model(monkeypatch, never_ready(reviews))
+    result = asyncio.run(
+        run_diagnosis(
+            ObservationStore(*observation),
+            request(),
+            LLMReasoner("offline", max_model_calls=8),
+            verification_mode="domain_llm",
+        )
+    )
+    # Only the last loop closes, so only it is reviewed; domain issues still block the verdict.
+    assert len(reviews) == 1 and [r.model_reviewed for r in result.verification] == [
+        False,
+        False,
+        True,
+    ]
+    assert result.report.status == "needs_review"
