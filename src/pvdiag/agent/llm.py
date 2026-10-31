@@ -156,7 +156,16 @@ class LLMReasoner:
                 ).ainvoke([("system", prompt), ("human", serialized)]),
                 timeout=65,
             )
-        except Exception:  # noqa: BLE001 -- provider boundary strips credential-bearing error text
+        except Exception as error:  # noqa: BLE001 -- provider boundary strips credential-bearing error text
+            # Only the exception class and HTTP status, never the message: enough to tell
+            # rate limits and outages from timeouts without leaking provider text.
+            status = getattr(error, "status_code", None)
+            observation.update(
+                metadata={
+                    "provider_error_class": type(error).__name__,
+                    "provider_status": status if isinstance(status, int) else None,
+                }
+            )
             await self._settle(reservation, None, None)
             raise RuntimeError("model_call_failed") from None
         raw = response["raw"]

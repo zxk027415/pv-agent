@@ -137,8 +137,11 @@ def test_rejected_tool_is_recorded_without_dispatch(observation, tmp_path, monke
 def test_provider_failure_marks_unknown_usage_and_never_records_raw_exception(
     observation, tmp_path, monkeypatch
 ):
+    class RateLimited(ValueError):
+        status_code = 429
+
     def broken(payload, schema):
-        raise ValueError("PRIVATE_PROVIDER_KEY_MUST_NOT_APPEAR")
+        raise RateLimited("PRIVATE_PROVIDER_KEY_MUST_NOT_APPEAR")
 
     offline_model(monkeypatch, broken)
     store = TraceStore(tmp_path / "traces.sqlite3")
@@ -159,6 +162,13 @@ def test_provider_failure_marks_unknown_usage_and_never_records_raw_exception(
     assert generation["status"]["code"] == 2
     assert a["langfuse.observation.metadata.usage_missing"] == "true"
     assert "langfuse.observation.usage_details" not in a
+    metadata = next(
+        span["metadata"]
+        for span in store.snapshot()["span"].values()
+        if span["name"] == "llm.hypothesize"
+    )
+    assert metadata["provider_status"] == 429
+    assert metadata["provider_error_class"] == "RateLimited"
 
 
 def test_concurrent_diagnoses_have_independent_contexts(observation, tmp_path, monkeypatch):
