@@ -48,15 +48,19 @@ class LLMReasoner:
         temperature=0.0,
         api_key=None,
         max_model_calls=6,
+        max_review_calls=3,
         call_tracker=None,
     ):
         if not 1 <= max_model_calls <= 30:
             raise ValueError("invalid model call budget")
+        if not 1 <= max_review_calls <= 30:
+            raise ValueError("invalid model review budget")
         if base_url and api_key is None:
             raise ValueError(
                 "custom endpoints require an explicit API key; no implicit credential fallback"
             )
         self.max_model_calls = max_model_calls
+        self.max_review_calls = max_review_calls
         self.call_tracker = call_tracker
         kwargs = {
             "model_provider": provider,
@@ -77,6 +81,7 @@ class LLMReasoner:
             "temperature": temperature,
             "reported_models": [],
             "max_model_calls": max_model_calls,
+            "max_review_calls": max_review_calls,
             "endpoint_sha256": hashlib.sha256(
                 str(
                     base_url
@@ -89,6 +94,7 @@ class LLMReasoner:
             "input_tokens": 0,
             "output_tokens": 0,
             "model_calls": 0,
+            "review_calls": 0,
             "usage_missing_calls": 0,
         }
 
@@ -96,6 +102,8 @@ class LLMReasoner:
         if self.call_tracker is not None:
             try:
                 self.usage, models = await self.call_tracker.snapshot()
+                # Trackers without a review ledger (Ragas) report no review_calls key.
+                self.usage.setdefault("review_calls", 0)
                 self.metadata["reported_models"] = models
             except Exception:  # noqa: BLE001 -- storage errors may contain credential-bearing DSNs
                 raise RuntimeError("model_accounting_unavailable") from None
@@ -116,7 +124,7 @@ class LLMReasoner:
             if reported and reported not in self.metadata["reported_models"]:
                 self.metadata["reported_models"].append(reported)
 
-    async def _call(self, schema, payload, prompt):
+    async def _call(self, schema, payload, prompt, purpose="diagnosis"):
         with observe(
             "generation",
             f"llm.{payload.get('task', 'structured')}",
@@ -128,10 +136,15 @@ class LLMReasoner:
                 "max_output_tokens": 4096,
             },
         ) as observation:
-            return await self._invoke(schema, payload, prompt, observation)
+            return await self._invoke(schema, payload, prompt, observation, purpose)
 
-    async def _invoke(self, schema, payload, prompt, observation):
-        if self.usage["model_calls"] >= self.max_model_calls:
+    async def _invoke(self, schema, payload, prompt, observation, purpose="diagnosis"):
+        # Review calls draw on their own ledger: a diagnosis that legitimately
+        # uses every loop must not starve the verification gate that judges it.
+        if purpose == "review":
+            if self.usage["review_calls"] >= self.max_review_calls:
+                raise ValueError("model_review_budget_exhausted")
+        elif self.usage["model_calls"] >= self.max_model_calls:
             raise ValueError("model_call_budget_exhausted")
         serialized = json.dumps(payload, ensure_ascii=False, allow_nan=False)
         if len(serialized) > 80_000:
@@ -139,15 +152,20 @@ class LLMReasoner:
         reservation = None
         if self.call_tracker is not None:
             try:
-                reservation = await self.call_tracker.reserve()
+                reservation = await self.call_tracker.reserve(purpose)
             except ValueError:
                 raise
             except Exception:  # noqa: BLE001 -- redact all storage exception details
                 raise RuntimeError("model_accounting_unavailable") from None
-        self.usage["model_calls"] += 1
+        if purpose == "review":
+            self.usage["review_calls"] += 1
+            call_number = self.usage["review_calls"]
+        else:
+            self.usage["model_calls"] += 1
+            call_number = self.usage["model_calls"]
         try:
             observation.update(
-                metadata={"model_call_ordinal": reservation or self.usage["model_calls"]}
+                metadata={"model_call_ordinal": reservation or call_number}
             )
             mark_request_sent()
             response = await asyncio.wait_for(
@@ -177,7 +195,7 @@ class LLMReasoner:
                 "usage": usage,
                 "usage_missing": usage is None,
                 "reported_model": reported,
-                "model_call_number": self.usage["model_calls"],
+                "model_call_number": call_number,
             }
         )
         if response["parsing_error"] or response["parsed"] is None:
@@ -277,4 +295,5 @@ class LLMReasoner:
                 "rule_issues": [issue.model_dump() for issue in issues],
             },
             prompt,
+            purpose="review",
         )

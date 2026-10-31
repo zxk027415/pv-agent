@@ -241,6 +241,7 @@ class DiagnosisRuntime:
                 request,
                 self.contract,
                 self.reasoner.max_model_calls if self.reasoner.metadata.get("mode") == "LLM" else 0,
+                self.reasoner.max_review_calls if self.reasoner.metadata.get("mode") == "LLM" else 0,
             )
             await self._accounting(run_id)
             await self._execute({"request": request}, config, request)

@@ -282,7 +282,7 @@ def test_cli_refuses_unbounded_model_runs_and_completes_an_offline_plumbing_run(
     ]
     with pytest.raises(SystemExit):
         evolve_main([*common, "--output", str(tmp_path / "llm"), "--mode", "llm"])
-    assert "worst case is 12 diagnoses × 6 = 72 model calls" in capsys.readouterr().err
+    assert "worst case is 12 diagnoses × 9 = 108 model calls" in capsys.readouterr().err
     assert not (tmp_path / "llm").exists()
     assert evolve_main([*common, "--output", str(tmp_path / "b0")]) == 0
     ledger = json.loads((tmp_path / "b0" / "ledger.json").read_text())

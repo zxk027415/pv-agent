@@ -103,6 +103,7 @@ class RagasStore(TraceStore):
             ).fetchall()
         usage = {
             "model_calls": len(rows),
+            "review_calls": 0,
             "input_tokens": 0,
             "output_tokens": 0,
             "usage_missing_calls": 0,
@@ -125,7 +126,8 @@ class RagasCallTracker:
         self.store, self.job_id = store, job_id
         self.question_id, self.role, self.cache_key = question_id, role, cache_key
 
-    async def reserve(self):
+    async def reserve(self, purpose="diagnosis"):
+        # Ragas reasoners never issue review calls; budgets here are per-role.
         with self.store.connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(

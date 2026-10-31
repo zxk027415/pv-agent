@@ -102,6 +102,12 @@ class PostgresStore:
                             PRIMARY KEY(run_id, ordinal)
                         )
                     """)
+                    await connection.execute(
+                        "ALTER TABLE pvdiag_runs ADD COLUMN IF NOT EXISTS max_review_calls INTEGER NOT NULL DEFAULT 3 CHECK (max_review_calls >= 0)"
+                    )
+                    await connection.execute(
+                        "ALTER TABLE pvdiag_model_calls ADD COLUMN IF NOT EXISTS purpose TEXT NOT NULL DEFAULT 'diagnosis'"
+                    )
                 else:
                     row = await (
                         await connection.execute(
@@ -137,15 +143,16 @@ class PostgresStore:
             finally:
                 await connection.execute("SELECT pg_advisory_unlock(%s)", (key,))
 
-    async def create_run(self, run_id, request, contract, max_model_calls):
+    async def create_run(self, run_id, request, contract, max_model_calls, max_review_calls=3):
         async with self._mutex:
             result = await self.connection.execute(
-                "INSERT INTO pvdiag_runs(run_id, request, contract, max_model_calls) VALUES (%s, %s::jsonb, %s::jsonb, %s) ON CONFLICT DO NOTHING RETURNING run_id",
+                "INSERT INTO pvdiag_runs(run_id, request, contract, max_model_calls, max_review_calls) VALUES (%s, %s::jsonb, %s::jsonb, %s, %s) ON CONFLICT DO NOTHING RETURNING run_id",
                 (
                     run_id,
                     request.model_dump_json(),
                     json.dumps(contract, sort_keys=True),
                     max_model_calls,
+                    max_review_calls,
                 ),
             )
             if await result.fetchone() is None:
@@ -162,7 +169,7 @@ class PostgresStore:
         async with self._mutex:
             row = await (
                 await self.connection.execute(
-                    "SELECT request, contract, max_model_calls FROM pvdiag_runs WHERE run_id=%s",
+                    "SELECT request, contract, max_model_calls, max_review_calls FROM pvdiag_runs WHERE run_id=%s",
                     (run_id,),
                 )
             ).fetchone()
@@ -178,30 +185,30 @@ class ModelCallTracker:
     def __init__(self, store, run_id):
         self.store, self.run_id = store, run_id
 
-    async def reserve(self):
+    async def reserve(self, purpose="diagnosis"):
         async with self.store._mutex, self.store.connection.transaction():
             row = await (
                 await self.store.connection.execute(
-                    "SELECT max_model_calls FROM pvdiag_runs WHERE run_id=%s FOR UPDATE",
+                    "SELECT max_model_calls, max_review_calls FROM pvdiag_runs WHERE run_id=%s FOR UPDATE",
                     (self.run_id,),
                 )
             ).fetchone()
             if not row:
                 raise ValueError("unknown persistent run")
-            count = (
-                await (
-                    await self.store.connection.execute(
-                        "SELECT count(*) AS calls FROM pvdiag_model_calls WHERE run_id=%s",
-                        (self.run_id,),
-                    )
-                ).fetchone()
-            )["calls"]
-            if count >= row["max_model_calls"]:
+            rows = await (
+                await self.store.connection.execute(
+                    "SELECT purpose, count(*) AS calls FROM pvdiag_model_calls WHERE run_id=%s GROUP BY purpose",
+                    (self.run_id,),
+                )
+            ).fetchall()
+            by_purpose = {item["purpose"]: item["calls"] for item in rows}
+            cap = row["max_review_calls"] if purpose == "review" else row["max_model_calls"]
+            if by_purpose.get(purpose, 0) >= cap:
                 raise ValueError("model_call_budget_exhausted")
-            ordinal = count + 1
+            ordinal = sum(by_purpose.values()) + 1
             await self.store.connection.execute(
-                "INSERT INTO pvdiag_model_calls(run_id, ordinal) VALUES (%s, %s)",
-                (self.run_id, ordinal),
+                "INSERT INTO pvdiag_model_calls(run_id, ordinal, purpose) VALUES (%s, %s, %s)",
+                (self.run_id, ordinal, purpose),
             )
             return ordinal
 
@@ -223,7 +230,7 @@ class ModelCallTracker:
         async with self.store._mutex:
             row = await (
                 await self.store.connection.execute(
-                    "SELECT count(*) AS model_calls, coalesce(sum(input_tokens),0) AS input_tokens, coalesce(sum(output_tokens),0) AS output_tokens, count(*) FILTER (WHERE usage_missing) AS usage_missing_calls FROM pvdiag_model_calls WHERE run_id=%s",
+                    "SELECT count(*) FILTER (WHERE purpose='diagnosis') AS model_calls, count(*) FILTER (WHERE purpose='review') AS review_calls, coalesce(sum(input_tokens),0) AS input_tokens, coalesce(sum(output_tokens),0) AS output_tokens, count(*) FILTER (WHERE usage_missing) AS usage_missing_calls FROM pvdiag_model_calls WHERE run_id=%s",
                     (self.run_id,),
                 )
             ).fetchone()

@@ -16,7 +16,7 @@ from pvdiag.agent.gateway import MCPGateway
 from pvdiag.agent.llm import LLMReasoner
 from pvdiag.agent.rules import RuleReasoner
 from pvdiag.agent.runtime import open_runtime
-from pvdiag.agent.state import DiagnosisReport, ModelReview, Plan, ToolCall
+from pvdiag.agent.state import DiagnosisReport, ModelReview, Plan, ToolCall, VerificationIssue
 from pvdiag.knowledge.store import KnowledgeStore
 from pvdiag.mcp_servers.pv_analytics import create_server as analytics_server
 from pvdiag.mcp_servers.pv_data import create_server as data_server
@@ -220,7 +220,7 @@ def test_failed_structural_check_cannot_trigger_early_level_repair_loop(
     assert len(attempts) == (1 if level == "A0" else 2)
 
 
-def test_a3_uses_knowledge_domain_feedback_and_model_review_within_shared_budget(
+def test_a3_uses_knowledge_domain_feedback_and_model_review_with_review_ledger(
     observation, monkeypatch
 ):
     plans = []
@@ -257,7 +257,8 @@ def test_a3_uses_knowledge_domain_feedback_and_model_review_within_shared_budget
     )
     assert [p["task"] for p in attempts] == ["plan", "hypothesize", "verify", "plan", "hypothesize"]
     assert result.model_usage == {
-        "model_calls": 5,
+        "model_calls": 4,
+        "review_calls": 1,
         "input_tokens": 35,
         "output_tokens": 15,
         "usage_missing_calls": 0,
@@ -265,6 +266,85 @@ def test_a3_uses_knowledge_domain_feedback_and_model_review_within_shared_budget
     assert result.verification[0].model_reviewed and not result.verification[0].passed
     assert result.report.status == "inconclusive" and result.verification_mode == "domain_llm"
     assert any(t.name == "get_playbook" and t.success for t in result.trace)
+
+
+def test_a3_review_survives_an_exhausted_diagnosis_budget(observation, monkeypatch):
+    # Regression (2026-10-31): with the old shared ledger this flow spent all
+    # max_model_calls on plan/hypothesize, the closing review starved, and the
+    # run degraded with model_review_failed despite a verified verdict.
+    plans = []
+
+    def handler(payload, schema):
+        if schema is Plan:
+            plans.append(payload)
+            if len(plans) == 1:
+                return Plan(calls=[ToolCall(name="get_playbook", arguments={"fault_type": "F3"})])
+            return Plan(calls=[], ready_for_verdict=True)
+        if schema is ModelReview:
+            return ModelReview(passed=True, issues=[])
+        return DiagnosisReport(
+            status="normal", summary="设备观测稳定。", evidence_ids=list(payload["evidence"])
+        )
+
+    attempts = offline_model(monkeypatch, handler)
+    result = asyncio.run(
+        run_diagnosis(
+            ObservationStore(*observation),
+            request(),
+            LLMReasoner("offline", max_model_calls=2),
+            ablation="A3",
+            knowledge_store=KnowledgeStore(),
+        )
+    )
+    # The diagnosis budget (2) is fully spent on plan + hypothesize, yet the
+    # closing review still runs from its own ledger; under the old shared
+    # ledger this record carried model_review_failed instead.
+    assert [p["task"] for p in attempts] == ["plan", "hypothesize", "verify"]
+    assert result.verification[0].model_reviewed
+    assert "model_review_failed" not in {i.code for i in result.verification[0].issues}
+    assert result.model_usage["model_calls"] == 2
+    assert result.model_usage["review_calls"] == 1
+
+
+def test_a3_review_budget_exhaustion_still_fails_the_gate(observation, monkeypatch):
+    # The separate ledger is still a hard cap: once review calls run out, a
+    # closing verdict cannot be adopted (model_review_failed, not a pass).
+    plans = []
+
+    def handler(payload, schema):
+        if schema is Plan:
+            plans.append(payload)
+            if len(plans) == 1:
+                return Plan(calls=[ToolCall(name="get_playbook", arguments={"fault_type": "F3"})])
+            return Plan(calls=[], ready_for_verdict=True)
+        if schema is ModelReview:
+            return ModelReview(
+                passed=False,
+                issues=[
+                    VerificationIssue(
+                        code="normal_peers_unverified", message="同组设备尚未核验。"
+                    )
+                ],
+            )
+        return DiagnosisReport(
+            status="normal", summary="设备观测稳定。", evidence_ids=list(payload["evidence"])
+        )
+
+    attempts = offline_model(monkeypatch, handler)
+    result = asyncio.run(
+        run_diagnosis(
+            ObservationStore(*observation),
+            request(),
+            LLMReasoner("offline", max_model_calls=6, max_review_calls=1),
+            ablation="A3",
+            knowledge_store=KnowledgeStore(),
+        )
+    )
+    assert [p["task"] for p in attempts].count("verify") == 1
+    assert not result.verification[-1].model_reviewed
+    assert "model_review_failed" in {i.code for i in result.verification[-1].issues}
+    assert result.report.status == "needs_review"
+    assert result.model_usage["review_calls"] == 1
 
 
 @pytest.mark.parametrize(
@@ -353,10 +433,15 @@ def test_allowed_tools_reach_real_mcp_and_return_citable_evidence(
     assert result.evidence[result.trace[-1].evidence_id]["tool"] == tool
 
 
-def test_a3_review_cannot_exceed_the_shared_model_budget(observation, monkeypatch):
+def test_a3_review_uses_its_own_ledger_not_the_diagnosis_budget(observation, monkeypatch):
+    # Replaces the pre-2026-10-31 shared-budget contract: the diagnosis budget
+    # (2) is spent by plan + hypothesize, and the closing review still runs
+    # from the separate review ledger instead of starving.
     def handler(payload, schema):
         if schema is Plan:
             return Plan(calls=[])
+        if schema is ModelReview:
+            return ModelReview(passed=True, issues=[])
         assert schema is DiagnosisReport
         return DiagnosisReport(
             status="normal", summary="设备观测稳定。", evidence_ids=list(payload["evidence"])
@@ -373,11 +458,13 @@ def test_a3_review_cannot_exceed_the_shared_model_budget(observation, monkeypatc
             max_loops=1,
         )
     )
-    assert len(attempts) == result.model_usage["model_calls"] == 2
+    assert [p["task"] for p in attempts] == ["plan", "hypothesize", "verify"]
+    assert result.model_usage["model_calls"] == 2
+    assert result.model_usage["review_calls"] == 1
     assert result.model_usage["usage_missing_calls"] == 0
+    assert result.verification[-1].model_reviewed
+    assert "model_review_failed" not in {i.code for i in result.verification[-1].issues}
     assert result.report.status == "needs_review"
-    assert not result.verification[-1].model_reviewed
-    assert "model_review_failed" in {i.code for i in result.verification[-1].issues}
 
 
 def test_persistent_contract_binds_ablation_configuration(observation, monkeypatch):

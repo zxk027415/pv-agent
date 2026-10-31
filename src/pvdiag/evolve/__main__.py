@@ -103,10 +103,11 @@ def main(argv=None):
         frame = pd.read_parquet(args.source)
     bound = max_diagnoses(len(scenarios), args.rounds, args.patches, args.generate_scenes)
     if args.mode == "llm":
-        calls = bound * args.max_model_calls
+        per_diagnosis = args.max_model_calls + getattr(args, "max_review_calls", 3)
+        calls = bound * per_diagnosis
         if args.max_total_model_calls is None or calls > args.max_total_model_calls:
             parser.error(
-                f"worst case is {bound} diagnoses × {args.max_model_calls} = {calls} model calls; "
+                f"worst case is {bound} diagnoses × {per_diagnosis} = {calls} model calls; "
                 "set --max-total-model-calls to at least that; no model request was sent"
             )
     else:

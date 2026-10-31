@@ -56,6 +56,7 @@ def reasoner_from_args(args):
         base_url=args.base_url,
         api_key=key,
         max_model_calls=getattr(args, "max_model_calls", 6),
+        max_review_calls=getattr(args, "max_review_calls", 3),
     )
 
 
@@ -64,6 +65,7 @@ def add_model_arguments(parser):
     parser.add_argument("--model", default="deepseek-chat")
     parser.add_argument("--base-url", default="https://api.deepseek.com")
     parser.add_argument("--max-model-calls", type=int, default=6)
+    parser.add_argument("--max-review-calls", type=int, default=3)
     parser.add_argument(
         "--credential-env", help="explicit credential field for the selected endpoint"
     )

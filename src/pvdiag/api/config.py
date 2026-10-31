@@ -58,6 +58,7 @@ class ProfileConfig(Model):
     base_url: str = "https://api.deepseek.com"
     credential_env: str | None = None
     max_model_calls: int = Field(default=6, ge=1, le=6)
+    max_review_calls: int = Field(default=3, ge=1, le=6)
     verification: Literal["structural", "domain", "domain_llm"] = "domain"
     knowledge_root: Path | None = None
     retrieval_mode: Literal["bm25", "hybrid_bge"] = "bm25"
@@ -127,6 +128,7 @@ class Profile:
             "end": end.isoformat(),
             "mode": self.config.mode,
             "max_model_calls": self.config.max_model_calls if self.config.mode == "llm" else 0,
+            "max_review_calls": self.config.max_review_calls if self.config.mode == "llm" else 0,
             "work_orders_enabled": self.ops is not None,
         }
 

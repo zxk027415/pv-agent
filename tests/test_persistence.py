@@ -382,6 +382,7 @@ def test_llm_accounting_is_committed_before_requests_and_restored_on_reconstruct
                 await resumed._call(Plan, {}, "fixture")
             assert resumed.usage == {
                 "model_calls": 2,
+                "review_calls": 0,
                 "input_tokens": 14,
                 "output_tokens": 6,
                 "usage_missing_calls": 0,
@@ -473,6 +474,7 @@ def test_suspended_llm_run_restores_usage_without_resetting_the_six_call_budget(
                 assert result.result.action_outcome.status == "created"
                 assert result.result.model_usage == {
                     "model_calls": 6,
+                    "review_calls": 0,
                     "input_tokens": 42,
                     "output_tokens": 18,
                     "usage_missing_calls": 0,
