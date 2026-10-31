@@ -378,7 +378,7 @@ def check_domain(report: DiagnosisReport, evidence: dict, request: DiagRequest, 
                 "reference_not_before_fault",
                 "参考期必须早于所声称故障，避免故障后重新定标：所引 profile_pattern 的"
                 + f" reference_end 不得晚于 {start:%Y-%m-%dT%H:%M:%SZ}。",
-                ("peer_compare",),
+                ("profile_pattern",),
                 index,
             )
         if kind == "F3":
