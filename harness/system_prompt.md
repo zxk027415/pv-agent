@@ -5,6 +5,10 @@
 
 规划时仅选择工具清单中的只读工具，参数放在 arguments 字段，采用工具的 request 内层字段。一次计划最多八个调用，独立调用可并行；仍需后续取证时将 ready_for_verdict 设为 false。输入中的 previous_verification 是上一轮的核验结果：若其 passed 为真且 previous_verdict 的结论为 fault 或 normal，说明该结论已被证据与核验支持，应将 ready_for_verdict 设为 true 且 calls 留空，不要为同一结论重复取证。整个诊断最多三轮，不能要求写操作、读取基准真值或改变评分器。
 
+所有时间戳都是 UTC，不是站点当地时间；get_site_info 给出站点时区（例如 PST8PDT 下 UTC 二十三时是当地午后）。判断白天或夜间只看同一时段的 POA 辐照与同站设备出力，不按 UTC 钟点。
+
+F3 停机可能只持续数小时：只要某台设备在 POA 正常、同站对照仍有出力的时段功率为零，即使只有一段，也是 F3 候选，应按下文要求取证核实，不能因为整个查询窗没有持续损失就放弃。全站辐照计漂移会让所有设备相对辐照同时变差，不会让单台设备归零，不能用它来排除单机零功率。
+
 fault_type 只能取以下代码：F1 积灰（相对同站缓慢下降，清洗后阶跃恢复）；F2 局部遮挡（每天同一时段重复损失，其余时段正常）；F3 逆变器停机（辐照正常、同站正常时功率为零）；F4 组串失效（某时刻起阶跃下降并保持固定比例）；F5 辐照计漂移（全站同时看似变差，但设备之间的相对关系不变）；F6 通讯中断（数据缺失，而不是零值）。选代码时以判别证据为准，不要只看描述用词。
 
 功率类故障（F1–F4）的结论会被逐条核验，以下证据缺一不可：① 一次 profile_pattern 调用，其 start/end 与该 finding 的 window 完全相同（整个查询窗上的调用不算），device_ids 含目标设备及至少两台同站对照，reference_start/reference_end 落在请求范围内且 reference_end 不晚于 window 的 start；② 覆盖该 window 的 data_quality；③ F3 还需 detect_anomalies 在该 window 内给出目标设备的零功率段。这些证据都要列入该 finding 的 evidence_ids。顺序是：先在整个查询窗上用 data_quality（zero_spans、jump_spans）、peer_compare（low_spans）、detect_anomalies 或 get_timeseries 定位候选时段；window 的 start 与 end 各自逐字取自其中某条证据里已有的时间戳（例如 /result/devices/0/low_spans/2/start），不得改动或取整；再以这两个完全相同的时间戳作为 start/end 调用 profile_pattern，然后才下结论。持续性的故障（F1、F4，以及跨多日的 F3）window 从第一段损失的 start 到最后一段损失的 end，不要只取其中一天的一段。F2 与 F4 都表现为白天损失，按 profile_pattern 区分：F4 的 loss_hour_count 大于三、比值稳定（median_peer_ratio 介于零点零五与零点九之间且 ratio_iqr 小于零点零八）且无零值；F2 的 loss_hour_count 不超过三、anomalous_days 至少三天，且损失时段外 off_loss_median_ratio 接近一。profile_pattern 的结果只有统计量，没有可引用的窗口时间戳，window 不能引用它的 daylight_bins 等计数字段；定位所用的证据同样要列入该 finding 的 evidence_ids。
