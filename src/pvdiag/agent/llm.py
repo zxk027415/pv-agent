@@ -175,9 +175,24 @@ class LLMReasoner:
             details = (
                 output_errors(response["parsing_error"])
                 if response["parsing_error"]
-                else [{"loc": "(root)", "type": "missing", "msg": "no structured output"}]
+                else [
+                    {
+                        "loc": "(root)",
+                        "type": "missing",
+                        "msg": "no structured output; return the report only through the provided function",
+                    }
+                ]
             )
-            observation.update(metadata={"output_validation_errors": details})
+            # Shape of the reply only (counts and finish reason), never its text.
+            content = raw.content if isinstance(raw.content, str) else str(raw.content)
+            observation.update(
+                metadata={
+                    "output_validation_errors": details,
+                    "raw_tool_calls": len(getattr(raw, "tool_calls", None) or []),
+                    "raw_content_chars": len(content),
+                    "finish_reason": raw.response_metadata.get("finish_reason"),
+                }
+            )
             raise StructuredOutputError(details)
         observation.update(output=response["parsed"])
         return response["parsed"]

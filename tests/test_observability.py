@@ -443,3 +443,43 @@ def test_changed_reviewed_snapshot_is_rejected_before_any_upload(evaluated):
 
     asyncio.run(verify())
     assert wire.requests == []
+
+
+def test_text_only_reply_records_its_shape_but_never_its_text(observation, tmp_path, monkeypatch):
+    from langchain_core.messages import AIMessage
+
+    import pvdiag.agent.llm as module
+
+    text = "PRIVATE_REPORT_TEXT_MUST_NOT_APPEAR"
+
+    class TextOnlySDK:
+        def with_structured_output(self, schema, **kwargs):
+            return self
+
+        async def ainvoke(self, messages):
+            raw = AIMessage(
+                content=text,
+                usage_metadata={"input_tokens": 5, "output_tokens": 2, "total_tokens": 7},
+                response_metadata={"model_name": "offline", "finish_reason": "stop"},
+            )
+            return {"raw": raw, "parsed": None, "parsing_error": None}
+
+    monkeypatch.setattr(module, "init_chat_model", lambda *args, **kwargs: TextOnlySDK())
+    store = TraceStore(tmp_path / "traces.sqlite3")
+    result = asyncio.run(
+        run_diagnosis(
+            ObservationStore(*observation),
+            request(),
+            LLMReasoner("offline"),
+            ablation="A0",
+            trace_store=store,
+        )
+    )
+    assert result.report.status == "needs_review"
+    snapshot = store.snapshot()
+    assert text not in canonical(snapshot)
+    metadata = next(
+        span["metadata"] for span in snapshot["span"].values() if span["name"] == "llm.hypothesize"
+    )
+    assert metadata["raw_tool_calls"] == 0 and metadata["raw_content_chars"] == len(text)
+    assert metadata["finish_reason"] == "stop"
