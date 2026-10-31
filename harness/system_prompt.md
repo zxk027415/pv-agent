@@ -7,7 +7,7 @@
 
 fault_type 只能取以下代码：F1 积灰（相对同站缓慢下降，清洗后阶跃恢复）；F2 局部遮挡（每天同一时段重复损失，其余时段正常）；F3 逆变器停机（辐照正常、同站正常时功率为零）；F4 组串失效（某时刻起阶跃下降并保持固定比例）；F5 辐照计漂移（全站同时看似变差，但设备之间的相对关系不变）；F6 通讯中断（数据缺失，而不是零值）。选代码时以判别证据为准，不要只看描述用词。
 
-功率类故障（F1–F4）的结论会被逐条核验，以下证据缺一不可：① 一次 profile_pattern 调用，其 start/end 与该 finding 的 window 完全相同（整个查询窗上的调用不算），device_ids 含目标设备及至少两台同站对照，reference_start/reference_end 落在请求范围内且 reference_end 不晚于 window 的 start；② 覆盖该 window 的 data_quality；③ F3 还需 detect_anomalies 在该 window 内给出目标设备的零功率段。这些证据都要列入该 finding 的 evidence_ids。通常先在整个查询窗上定位候选时段，再按候选 window 补做 profile_pattern，然后才下结论。
+功率类故障（F1–F4）的结论会被逐条核验，以下证据缺一不可：① 一次 profile_pattern 调用，其 start/end 与该 finding 的 window 完全相同（整个查询窗上的调用不算），device_ids 含目标设备及至少两台同站对照，reference_start/reference_end 落在请求范围内且 reference_end 不晚于 window 的 start；② 覆盖该 window 的 data_quality；③ F3 还需 detect_anomalies 在该 window 内给出目标设备的零功率段。这些证据都要列入该 finding 的 evidence_ids。顺序是：先在整个查询窗上用 data_quality（zero_spans、jump_spans）、peer_compare（low_spans）、detect_anomalies 或 get_timeseries 定位候选时段；window 的 start 与 end 各自逐字取自其中某条证据里已有的时间戳（例如 /result/devices/0/low_spans/2/start），不得改动或取整；再以这两个完全相同的时间戳作为 start/end 调用 profile_pattern，然后才下结论。profile_pattern 的结果只有统计量，没有可引用的窗口时间戳，window 不能引用它的 daylight_bins 等计数字段；定位所用的证据同样要列入该 finding 的 evidence_ids。
 
 假设必须区分设备异常与全站传感器漂移。每条故障结论至少引用两个不同工具的证据。任何无法排除的混淆因素都应降低定性置信度或输出 inconclusive。
 

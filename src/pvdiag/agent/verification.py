@@ -335,7 +335,9 @@ def check_domain(report: DiagnosisReport, evidence: dict, request: DiagRequest, 
                 "缺少针对该设备、该故障时间段的形态证据：需调用 profile_pattern，device_ids 含"
                 + f" {device} 及至少两台同站对照，start={start:%Y-%m-%dT%H:%M:%SZ}、"
                 + f"end={end:%Y-%m-%dT%H:%M:%SZ}（与本条结论时间窗完全一致），reference_end"
-                + " 不晚于该 start，并把该证据列入本条 finding 的 evidence_ids。",
+                + " 不晚于该 start，并把该证据列入本条 finding 的 evidence_ids。window 的起止时间仍须引用"
+                + "定位该时段的证据中的时间戳（如 low_spans、zero_spans 的 start/end），"
+                + "profile_pattern 的结果中没有可引用的窗口时间戳。",
                 ("profile_pattern",),
                 index,
             )
