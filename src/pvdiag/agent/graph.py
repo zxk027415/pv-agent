@@ -305,7 +305,14 @@ def build_graph(
                 check_domain(state["verdict"], state["evidence"], state["request"], state["scope"])
             )
         reviewed = False
-        ready = closing(state) and state["verdict"].status in {"fault", "normal"}
+        # Review a verdict that cleared the rule gates as soon as it appears,
+        # not only once the planner closes: the feedback has to reach
+        # replanning while loops remain to repair it. A closing verdict is
+        # reviewed regardless, with any rule issues as context. The review
+        # ledger bounds how often this can fire.
+        ready = state["verdict"].status in {"fault", "normal"} and (
+            not issues or closing(state)
+        )
         if verification_mode == "domain_llm" and not structural and ready:
             try:
                 review = await reasoner.review(state, issues, review_prompt)
