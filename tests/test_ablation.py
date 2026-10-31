@@ -542,3 +542,51 @@ def test_last_loop_acceptance_still_runs_the_model_review(observation, monkeypat
         True,
     ]
     assert result.report.status == "needs_review"
+
+
+def test_planner_closing_after_a_verified_verdict_reuses_it_without_rewriting(
+    observation, monkeypatch
+):
+    inner = request().model_dump(mode="json", exclude={"question"})
+    calls = [
+        ToolCall(name="data_quality", arguments=inner),
+        ToolCall(
+            name="peer_compare",
+            arguments=inner
+            | {
+                "poa_device_id": "poa",
+                "reference_start": "2019-01-01T00:00:00Z",
+                "reference_end": "2019-01-03T00:00:00Z",
+            },
+        ),
+    ]
+    hypotheses = []
+
+    def handler(payload, schema):
+        if schema is Plan:
+            first = payload["previous_verification"] is None
+            return Plan(calls=calls if first else [], ready_for_verdict=not first)
+        hypotheses.append(payload)
+        if len(hypotheses) > 1:
+            # A rewrite would fail the guard; it must never be requested.
+            return DiagnosisReport(status="normal", summary="未引用的数字 123。")
+        measured = [
+            k
+            for k, ev in payload["evidence"].items()
+            if ev["tool"] in {"data_quality", "peer_compare"}
+        ]
+        return DiagnosisReport(
+            status="normal", summary="未见设备异常。", evidence_ids=sorted(measured)
+        )
+
+    offline_model(monkeypatch, handler)
+    result = asyncio.run(
+        run_diagnosis(
+            ObservationStore(*observation),
+            request(),
+            LLMReasoner("offline"),
+            verification_mode="structural",
+        )
+    )
+    assert len(hypotheses) == 1 and result.loops == 1
+    assert result.report.status == "normal" and result.model_usage["model_calls"] == 3

@@ -199,6 +199,22 @@ def build_graph(
     def accepted(state):
         return not state["critique"] and closing(state)
 
+    def reuse_verified(state):
+        # A planner that closes with no new calls, right after a verified fault/normal
+        # verdict, sees exactly the evidence that verdict was checked against; rewriting
+        # it would only risk a fresh formatting failure.
+        if (policy and not policy.feedback) or not state["verification"]:
+            return False
+        last = state["verification"][-1]
+        return (
+            state["plan"].ready_for_verdict
+            and not state["plan"].calls
+            and last.passed
+            and last.report_status in {"fault", "normal"}
+            and state["verdict"].status == last.report_status
+            and (verification_mode != "domain_llm" or last.model_reviewed)
+        )
+
     def model_state(state):
         if policy and not policy.feedback:
             # No output-check findings, prior verdicts or reviewer guidance can
@@ -505,7 +521,11 @@ def build_graph(
     graph.add_edge("guard_in", "fixed_summary" if policy else "plan")
     graph.add_edge("fixed_summary", "recall_memory" if memory_view else "hypothesize" if policy and policy.level == "A0" else "plan")
     graph.add_edge("recall_memory", "plan")
-    graph.add_edge("plan", "investigate")
+    graph.add_conditional_edges(
+        "plan",
+        lambda state: "propose_action" if reuse_verified(state) else "investigate",
+        {"propose_action": "propose_action", "investigate": "investigate"},
+    )
     graph.add_edge("investigate", "hypothesize")
     graph.add_edge("hypothesize", "verify")
     graph.add_conditional_edges(
