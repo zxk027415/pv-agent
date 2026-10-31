@@ -63,6 +63,7 @@ async def run_benchmark(
     trace_store=None,
     memory_view=None,
     harness_root=None,
+    max_loops=3,
     scenario_ids=None,
     scope="dev",
     preflight_only=False,
@@ -193,6 +194,7 @@ async def run_benchmark(
             store,
             request,
             reasoner_factory(),
+            max_loops=max_loops,
             verification_mode=verification_mode,
             knowledge_store=knowledge_store,
             ablation=ablation,
@@ -297,6 +299,7 @@ def main(argv=None):
     )
     parser.add_argument("--final-ledger", type=Path, default=Path("data/eval/final_ledger.json"))
     parser.add_argument("--stage", help="final evaluation stage label, e.g. round0 or final")
+    parser.add_argument("--max-loops", type=int, default=3)
     parser.add_argument(
         "--faults-only",
         action="store_true",
@@ -322,6 +325,7 @@ def main(argv=None):
                 ablation=args.ablation,
                 trace_store=TraceStore(args.trace_db) if args.trace_db else None,
                 memory_view=memory_view,
+                max_loops=args.max_loops,
                 scope=args.scope,
                 preflight_only=args.preflight_only,
                 allow_final_evaluation=args.allow_final_evaluation,
