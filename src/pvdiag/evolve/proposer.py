@@ -50,8 +50,21 @@ def failure_summary(index, failure, category):
                 for f in report.get("findings", [])
             ],
         },
+        # Run records carry issues as structured dicts; the proposer needs
+        # only the deduplicated codes. (Real-run regression, 2026-10-31: this
+        # set comprehension crashed on unhashable dicts because the LLM
+        # proposer path had only ever seen string fixtures.)
         "verification_issues": sorted(
-            {issue for record in run.get("verification", []) for issue in record.get("issues", [])}
+            {
+                code
+                for record in run.get("verification", [])
+                for issue in record.get("issues", [])
+                if (
+                    code := issue.get("code")
+                    if isinstance(issue, dict)
+                    else str(issue)
+                )
+            }
         )[:20],
         "tool_calls": dict(
             sorted(Counter(t["name"] for t in run.get("trace", []) if t.get("success")).items())

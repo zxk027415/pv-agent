@@ -490,3 +490,35 @@ def test_generated_scene_source_writes_tagged_pools_per_round(tmp_path):
     assert written["source_sha256"] == "a" * 64 and len(written["scenarios"]) == 2
     for scene in first:
         assert (tmp_path / "round1" / "scenes" / scene["scenario_id"] / "timeseries.parquet").exists()
+
+
+def test_failure_summary_tolerates_structured_verification_issues():
+    from pvdiag.evolve.proposer import failure_summary
+
+    failure = {
+        "case": {"status": "needs_review", "joint_root_device_correct": False},
+        "run": {
+            "report": {"status": "needs_review", "summary": "s", "findings": []},
+            "verification": [
+                {
+                    "issues": [
+                        {"code": "fault_profile_missing", "message": "m"},
+                        {"code": "single_statistic_only", "message": "m"},
+                    ]
+                },
+                {"issues": [{"code": "fault_profile_missing", "message": "m"}]},
+            ],
+            "trace": [
+                {"name": "peer_compare", "success": True},
+                {"name": "broken_tool", "success": False},
+            ],
+            "loops": 3,
+        },
+    }
+    summary = failure_summary(1, failure, "F3")
+    assert summary["verification_issues"] == [
+        "fault_profile_missing",
+        "single_statistic_only",
+    ]
+    assert summary["tool_calls"] == {"peer_compare": 1}
+    assert summary["failed_tool_calls"] == 1
