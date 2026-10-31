@@ -207,9 +207,18 @@ def test_profile_from_other_window_or_source_cannot_support_a_finding(tmp_path):
     for item in altered.values():
         if item["tool"] == "profile_pattern":
             item["request"]["start"] = "2019-01-05T00:00:00Z"
-    assert "fault_profile_missing" in {
-        i.code for i in check_domain(report, altered, request, scope)
-    }
+    missing = [
+        i for i in check_domain(report, altered, request, scope) if i.code == "fault_profile_missing"
+    ]
+    finding = report.findings[0]
+    assert missing and all(
+        part in missing[0].message
+        for part in (
+            finding.device_id,
+            f"start={finding.window.start.value:%Y-%m-%dT%H:%M:%SZ}",
+            f"end={finding.window.end.value:%Y-%m-%dT%H:%M:%SZ}",
+        )
+    )
     for item in altered.values():
         item["source_sha256"] = "different_snapshot"
     assert "power_quality_unverified" in {

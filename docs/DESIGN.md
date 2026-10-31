@@ -437,7 +437,7 @@ pv-diagnosis-agent/
 | 只读 MCP 工具 | pv-data 4 个工具、pv-analytics 5 个工具均已接入 FastMCP / Pydantic；stdio、Streamable HTTP 实测通过；真实场景完成 90 次工具协议调用。2107 缺少可核实的单机物理参数，expected_power 返回 unavailable |
 | 诊断图与评分器 | 已接 LangGraph、有界 MCP 取证、结构/领域核验及离线自评接口；评分器 v1.2 新增知识只读分类和审批记录一致性检查，B0 rule-v2 的 M1 十场景仍为根因/定位 10/10、时间窗 9/10；同输入 M2 故障子集根因/定位 33/60、时间窗 32/60；新增积灰恢复、遮挡与采集缺失候选规则，短窗 F1 与 F5 仍未命中 |
 | 知识库 | 已核对许可并收录 5 份 pvlib 文档、6 份项目 Playbook；两项 MCP 工具、可选图接入和 30 题 BM25/BGE 对比已实跑。混合检索文档 Recall@3 为 1.0、MRR 为 0.9833；自编标签、不是 Ragas 或 A3 成绩 |
-| M1 剩余工作 | DeepSeek 单场景已真实调用九次（第五次误用无注入数据、作废）：第九次首次通过全部守卫与核验，F3、设备与时间窗均正确；单场景通过不代表稳定性，10 场景 Agent 评测未做（需新的调用授权）；当前 B0 数字不代表 LLM 成绩。后续还需可核实的物理参数与更完整的基线审核 |
+| M1 剩余工作 | DeepSeek 单场景已真实调用九次（第五次误用无注入数据、作废）：第九次首次通过全部守卫与核验，F3、设备与时间窗均正确；单场景通过不代表稳定性；10 场景 domain 评测 v1 全部弃答（守卫前根因+设备 5/10），已补核验要求说明，待授权复跑；当前 B0 数字不代表 LLM 成绩。后续还需可核实的物理参数与更完整的基线审核 |
 | 人工审批与模拟工单 | `interrupt` / `Command(resume=...)` 和本地 CLI 已接通；工单默认关闭，SQLite 持久化具体草案、人工决定和幂等工单，拒绝/篡改/重放路径已测试 |
 | 诊断持久化 | 已接真实 AsyncPostgresSaver、显式 schema 初始化、start/resume/show CLI、版本/数据绑定、活动锁及独立模型预算账本；受控审批已在不同 Python 进程间恢复，实际 M1 十场景保存/重开结果一致 |
 | 服务化 | FastAPI/SSE、服务端 profile 白名单、开发身份/角色、请求归属、幂等诊断、持久事件重放及身份绑定审批已验证；默认仅监听本机，Gradio 接入见下节，尚无生产身份系统 |
@@ -1255,3 +1255,25 @@ HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 .venv/bin/python -m pvdiag.eval.ragas pr
 不调用模型的复核：全套 **338 项通过、18 项跳过**；M1 B0 + domain 回归与此前一致（联合 10/10、时间窗 9/10、91 次工具调用、未审批写入 0）；`bench/m1_smoke.json` 十个场景（F3、F4 各 5 个）的观测数据齐全，`.env` 中有 `DEEPSEEK_API_KEY` 字段。README 与本节进度表中「尚无通过守卫的 LLM 诊断」已按第九次运行更正。
 
 M1 十场景 LLM 评测的代码路径已就绪：`run_bench` 为每个场景新建 reasoner，`--max-model-calls` 是**每场景**上限，十场景最多 60 次调用；接口错误在图内降级为 needs_review（计为弃答），不会中断整批。按第六至第九次运行估算，十场景约需输入 0.9–1.2M token、输出 3–4.5 万 token。执行仍需用户对「十场景、最多 60 次调用」的明确授权。
+
+### M1 十场景 DeepSeek 评测（v1）与领域核验要求不可见（2026-10-31）
+
+用户授权 M1 十场景、每场景最多 6 次调用（共 60 次）。命令：`run_bench --mode llm --allow-model-calls --max-model-calls 6 --verification domain --trace-db data/traces/m1_llm_v1.sqlite3 --output data/eval/m1_llm_v1`（结果与追踪未入库、未上传，工单关闭）。注意：此前九次单场景试跑都用 `structural` 核验，本次用 `domain` 以便与 B0 + domain 对照，两者不可直接比较。
+
+| 项目 | 结果 |
+|---|---|
+| 调用 / token | 58 次调用（F4-0004 两轮收口为 inconclusive，只用 4 次）；输入 907,962、输出 31,441 token；平均 17.4 秒/场景；返回模型名 deepseek-flash |
+| 评分 | 10/10 弃答（8 个 needs_review、2 个 inconclusive），联合命中 0/10；工具成功率 0.93；未审批写入 0 |
+| 守卫前的最后一轮假设 | 根因+设备正确 5/10：F3-0001、F3-0004（时间窗与真值一致）、F3-0002、F3-0003（结束偏早 30–60 分钟）、F4-0003；F4-0005 第 1 轮判对 F4，后两轮改判 F1；F3-0005 判 normal；F4-0001/0002/0004 均为 inconclusive |
+| 核验问题 | `fault_profile_missing` 9 次、`reference_not_before_fault` 3 次、判 normal 时的同站/异常/共模三项各 4 次、`outage_evidence_missing` 1 次、结构化输出失败 1 次 |
+
+**主因**：领域核验要求每条功率类故障结论引用一份 `profile_pattern` 证据，其 start/end 必须与该结论时间窗**完全一致**、reference_end 不晚于故障开始，并列入该 finding 的 evidence_ids；F3 另需 `detect_anomalies` 的零功率段。提示词没有说明这些要求，`fault_profile_missing` 的反馈只写了「缺少针对该设备、该故障时间段的形态证据」。模型通常只在整个查询窗上调用一次 `profile_pattern`，之后不知道要按结论窗口补做（例如 F4-0005 三轮都卡在这一项）。
+
+**次因（未修改，待决定）**：最终报告要求「规划」节点给出 ready_for_verdict，而规划在假设之前执行，因此第 3 轮的结论即使核验通过也不能收口（F4-0003 即此情况）。实际可用于收口的假设只有前两轮。是否允许「最后一轮核验通过即采纳」属于判定语义的变更，留待用户决定。
+
+**修复**（不调用模型，不放宽任何检查）：
+- `verification.py`：`fault_profile_missing` 的反馈写明所需调用，包括设备、与结论一致的 start/end（ISO UTC）、reference_end 上限，以及需要列入 finding 的 evidence_ids；`reference_not_before_fault` 写明 reference_end 的上限时间。判定逻辑不变。
+- `harness/system_prompt.md`：新增一段，列出 F1–F4 结论的核验证据要求，并给出推荐顺序：先在整个查询窗上定位，再按候选窗口补做 `profile_pattern`，最后下结论。
+- 测试：窗口不一致时，反馈中包含设备和结论窗口。全套 **338 项通过、18 项跳过**；M1 B0 回归不变（联合 10/10、时间窗 9/10、91 次工具调用）。
+
+**仍未验证**：修复后真实模型能否通过 domain 核验，需要新的调用授权。F4 的三次 inconclusive 与 F3-0005 的 normal 属于检出能力问题，这次修复并不针对它们。

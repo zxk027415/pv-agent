@@ -332,7 +332,10 @@ def check_domain(report: DiagnosisReport, evidence: dict, request: DiagRequest, 
         if profile is None:
             add(
                 "fault_profile_missing",
-                "缺少针对该设备、该故障时间段的形态证据。",
+                "缺少针对该设备、该故障时间段的形态证据：需调用 profile_pattern，device_ids 含"
+                + f" {device} 及至少两台同站对照，start={start:%Y-%m-%dT%H:%M:%SZ}、"
+                + f"end={end:%Y-%m-%dT%H:%M:%SZ}（与本条结论时间窗完全一致），reference_end"
+                + " 不晚于该 start，并把该证据列入本条 finding 的 evidence_ids。",
                 ("profile_pattern",),
                 index,
             )
@@ -373,7 +376,8 @@ def check_domain(report: DiagnosisReport, evidence: dict, request: DiagRequest, 
         ):
             add(
                 "reference_not_before_fault",
-                "参考期必须早于所声称故障，避免故障后重新定标。",
+                "参考期必须早于所声称故障，避免故障后重新定标：所引 profile_pattern 的"
+                + f" reference_end 不得晚于 {start:%Y-%m-%dT%H:%M:%SZ}。",
                 ("peer_compare",),
                 index,
             )
